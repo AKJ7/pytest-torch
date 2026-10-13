@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }} / ${{ matrix.torch_spec }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # oldest supported combination (torch < 2.3 needs numpy < 2)
+          - { os: ubuntu-latest, python: "3.9", torch_spec: "torch==2.2.*", extra_pins: '"numpy<2"' }
+          - { os: ubuntu-latest, python: "3.10", torch_spec: "torch==2.4.*" }
+          - { os: ubuntu-latest, python: "3.12", torch_spec: "torch==2.6.*" }
+          - { os: ubuntu-latest, python: "3.13", torch_spec: "torch" }
+          - { os: windows-latest, python: "3.12", torch_spec: "torch" }
+          - { os: macos-latest, python: "3.12", torch_spec: "torch" }
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tip: pin third-party actions to a commit SHA, or bump to the latest major.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Create environment
+        run: uv venv
+
+      - name: Install torch (CPU wheels)
+        shell: bash
+        run: >
+          uv pip install "${{ matrix.torch_spec }}" ${{ matrix.extra_pins }}
+          --extra-index-url https://download.pytorch.org/whl/cpu
+          --index-strategy unsafe-best-match
+
+      - name: Install the project and test dependencies
+        run: uv pip install -e . pytest pytest-xdist hypothesis matplotlib
+
+      # Dogfooding: annotations on failing tests + mismatch heatmaps as artifacts.
+      - name: Run tests
+        run: uv run --no-sync pytest -ra --torch-github-annotations --torch-failure-artifacts=failure-artifacts
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-artifacts-${{ matrix.os }}-py${{ matrix.python }}
+          path: failure-artifacts
+          if-no-files-found: ignore
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist

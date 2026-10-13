@@ -6,9 +6,10 @@ build-backend = "uv_build"
 name = "pytest-torch"
 version = "0.1.0"
 description = "pytest plugin that eases inference testing of PyTorch models"
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = ["pytest>=7.0"]
-classifiers = ["Framework :: Pytest"]
+classifiers = ["Framework :: Pytest", "Typing :: Typed"]
 
 [project.optional-dependencies]
 torch = ["torch>=2.0"]
@@ -18,6 +19,7 @@ onnx = ["onnx", "onnxruntime", "onnxscript"]
 hf = ["transformers"]
 timm = ["timm"]
 torchvision = ["torchvision"]
+plots = ["matplotlib"]
 
 [project.entry-points.pytest11]
 pytest_torch = "pytest_torch.plugin"

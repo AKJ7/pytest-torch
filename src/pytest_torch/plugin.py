@@ -1,4 +1,4 @@
-"""pytest-torch plugin: options, markers, fixtures.
+"""pytest-torch plugin: options, markers, fixtures, hooks.
 
 Keep module-level imports torch-free; import torch lazily inside hooks/fixtures
 so projects that don't use torch pay nothing at collection time.
@@ -6,17 +6,17 @@ so projects that don't use torch pay nothing at collection time.
 from __future__ import annotations
 
 import importlib.metadata
-import statistics
-import time
 import zlib
+from pathlib import Path
 
 import pytest
 
+from . import report as _artifacts
 from .golden import Golden
 
 
 # --------------------------------------------------------------------------- #
-# Options, markers, report header
+# Options, markers, hooks
 # --------------------------------------------------------------------------- #
 def pytest_addoption(parser):
     group = parser.getgroup("torch", "pytest-torch")
@@ -54,18 +54,94 @@ def pytest_addoption(parser):
         help="Rewrite golden files instead of comparing. "
         "Use with --torch-device=cpu for a portable reference.",
     )
+    # performance baselines
+    group.addoption(
+        "--torch-update-perf",
+        action="store_true",
+        help="Record performance baselines (`perf_baseline`) instead of comparing.",
+    )
+    group.addoption(
+        "--torch-perf-strict",
+        action="store_true",
+        help="Fail (instead of skip) when a performance baseline is missing.",
+    )
+    group.addoption(
+        "--torch-perf-file",
+        default=None,
+        help="Baseline file (default: <rootdir>/.torch-perf-baselines.json).",
+    )
+    # pytest-xdist
+    group.addoption(
+        "--torch-xdist-gpus",
+        default="auto",
+        help="Under pytest-xdist: spread workers over these GPUs. 'auto' (all), 'none', "
+        "or a comma-separated list such as 0,1.",
+    )
+    group.addoption(
+        "--torch-gpu-memory-fraction",
+        default="none",
+        help="Per-process CUDA memory cap under xdist: 'none', 'auto' (split each GPU "
+        "between the workers sharing it) or a float in (0, 1].",
+    )
+    # failure output
+    group.addoption(
+        "--torch-failure-artifacts",
+        default=None,
+        metavar="DIR",
+        help="Save a heatmap PNG for every tensor mismatch into DIR (needs matplotlib).",
+    )
+    group.addoption(
+        "--torch-github-annotations",
+        action="store_true",
+        help="Print GitHub Actions ::error annotations for failing tests.",
+    )
+
+
+class _GithubAnnotations:
+    def __init__(self, config):
+        self.config = config
+
+    def pytest_runtest_logreport(self, report):
+        if not report.failed or report.when not in ("setup", "call"):
+            return
+        path, lineno, _ = report.location
+        crash = getattr(report.longrepr, "reprcrash", None)
+        message = crash.message if crash is not None else str(report.longrepr)
+        command = _artifacts.github_annotation(
+            title=report.nodeid,
+            message=message[:2000],
+            file=path,
+            line=(lineno + 1) if lineno is not None else None,
+        )
+        terminal = self.config.pluginmanager.getplugin("terminalreporter")
+        if terminal is not None:
+            terminal.ensure_newline()
+            terminal.write_line(command)
+        else:
+            print(command)
 
 
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "torch_golden(name): name of the golden file used by `golden`"
-    )
-    config.addinivalue_line(
-        "markers", "torch_max_latency(ms): median latency budget enforced by `latency`"
-    )
-    config.addinivalue_line(
-        "markers", "torch_seed(n): seed used by `torch_seed` for this test"
-    )
+    for line in (
+        "torch_golden(name): name of the golden file used by `golden`",
+        "torch_max_latency(ms): median latency budget enforced by `latency`",
+        "torch_seed(n): seed used by `torch_seed` for this test",
+        "torch_gpu_exclusive(timeout=1800): serialize this test with other exclusive "
+        "tests on the same GPU (useful under pytest-xdist)",
+    ):
+        config.addinivalue_line("markers", line)
+    _artifacts.configure(config.getoption("torch_failure_artifacts"))
+    # Workers forward their reports to the controller, which prints the annotations.
+    if config.getoption("torch_github_annotations") and not hasattr(config, "workerinput"):
+        config.pluginmanager.register(_GithubAnnotations(config), "torch-github-annotations")
+
+
+def pytest_runtest_setup(item):
+    _artifacts.set_current_test(item.nodeid)
+
+
+def pytest_runtest_teardown(item, nextitem):
+    _artifacts.set_current_test(None)
 
 
 def pytest_report_header(config):
@@ -76,7 +152,7 @@ def pytest_report_header(config):
 
 
 # --------------------------------------------------------------------------- #
-# Device handling
+# Device handling (+ GPU assignment under pytest-xdist)
 # --------------------------------------------------------------------------- #
 def _mps_available() -> bool:
     import torch
@@ -112,14 +188,53 @@ def _devices(config) -> list[str]:
     return devices
 
 
-def _sync(device: str) -> None:
+def _assigned_gpu(config) -> int | None:
+    """GPU index for the current xdist worker (``None`` outside xdist workers)."""
+    from .parallel import assign_gpu, parse_gpu_option, worker_index
+
+    worker = worker_index()
+    if worker is None:
+        return None
     import torch
 
-    kind = device.split(":")[0]
-    if kind == "cuda":
-        torch.cuda.synchronize(device)
-    elif kind == "mps":
-        torch.mps.synchronize()
+    gpus = parse_gpu_option(config.getoption("torch_xdist_gpus"), torch.cuda.device_count)
+    return assign_gpu(worker, gpus)
+
+
+_configured_gpus: set[int] = set()
+
+
+def _apply_memory_fraction(config, gpu: int) -> None:
+    import torch
+
+    from .parallel import memory_fraction, parse_gpu_option, worker_count, worker_index
+
+    option = str(config.getoption("torch_gpu_memory_fraction")).strip().lower()
+    if option in ("", "none", "off"):
+        return
+    if option == "auto":
+        gpus = parse_gpu_option(config.getoption("torch_xdist_gpus"), torch.cuda.device_count)
+        fraction = memory_fraction(worker_index(), worker_count(), gpus)
+    else:
+        fraction = float(option)
+    if fraction is not None:
+        torch.cuda.set_per_process_memory_fraction(fraction, gpu)
+
+
+def _assign_worker_gpu(config, device: str) -> str:
+    """Map plain ``"cuda"`` to this xdist worker's GPU (test ids stay ``cuda``)."""
+    if device != "cuda":
+        return device
+    gpu = _assigned_gpu(config)
+    if gpu is None:
+        return device
+    import torch
+
+    torch.cuda.set_device(gpu)
+    if gpu not in _configured_gpus:
+        _configured_gpus.add(gpu)
+        _apply_memory_fraction(config, gpu)
+    return f"cuda:{gpu}"
 
 
 def pytest_generate_tests(metafunc):
@@ -132,7 +247,28 @@ def torch_device(request) -> str:
     device = request.param
     if not _device_available(device):
         pytest.skip(f"{device} is not available")
-    return device
+    return _assign_worker_gpu(request.config, device)
+
+
+@pytest.fixture(autouse=True)
+def _torch_gpu_exclusive(request):
+    """``@pytest.mark.torch_gpu_exclusive``: one such test at a time per GPU, across xdist workers."""
+    marker = request.node.get_closest_marker("torch_gpu_exclusive")
+    if marker is None:
+        yield
+        return
+    from .parallel import FileLock
+
+    factory = request.getfixturevalue("tmp_path_factory")
+    gpu = _assigned_gpu(request.config)
+    name = f"pytest-torch-gpu-{'any' if gpu is None else gpu}.lock"
+    # basetemp's parent is shared by all xdist workers of one session.
+    lock = FileLock(
+        Path(factory.getbasetemp()).parent / name,
+        timeout=float(marker.kwargs.get("timeout", 1800.0)),
+    )
+    with lock:
+        yield
 
 
 # --------------------------------------------------------------------------- #
@@ -225,7 +361,7 @@ def make_tensor(torch_generator, torch_device):
 
 
 # --------------------------------------------------------------------------- #
-# Inference context
+# Inference context, model zoo
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def inference_mode():
@@ -236,9 +372,6 @@ def inference_mode():
         yield
 
 
-# --------------------------------------------------------------------------- #
-# Model zoo (Hugging Face / timm / torchvision), cached per session
-# --------------------------------------------------------------------------- #
 @pytest.fixture(scope="session")
 def model_loader():
     """``ModelLoader`` with a per-session cache: ``model_loader.hf(...)``, ``.timm(...)``,
@@ -263,7 +396,7 @@ def golden(request) -> Golden:
 
 
 # --------------------------------------------------------------------------- #
-# Latency
+# Latency and performance baselines
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def latency(request, torch_device):
@@ -272,29 +405,48 @@ def latency(request, torch_device):
     Handles warmup and device synchronization. If the test carries
     ``@pytest.mark.torch_max_latency(ms=...)`` the budget is enforced.
     """
-    import torch
+    from .perf import measure_latency
 
     marker = request.node.get_closest_marker("torch_max_latency")
     budget = marker.kwargs.get("ms") if marker else None
 
     def measure(fn, *args, warmup: int = 5, iters: int = 20, **kwargs) -> float:
-        times = []
-        with torch.inference_mode():
-            for _ in range(warmup):
-                fn(*args, **kwargs)
-            _sync(torch_device)
-            for _ in range(iters):
-                start = time.perf_counter()
-                fn(*args, **kwargs)
-                _sync(torch_device)
-                times.append((time.perf_counter() - start) * 1e3)
-        median = statistics.median(times)
-        if budget is not None and median > budget:
+        stats = measure_latency(
+            fn, *args, device=torch_device, warmup=warmup, iters=iters, **kwargs
+        )
+        if budget is not None and stats.median_ms > budget:
             pytest.fail(
-                f"median latency {median:.2f} ms exceeds budget {budget} ms "
-                f"(min {min(times):.2f}, max {max(times):.2f}, n={iters})",
+                f"median latency {stats.median_ms:.2f} ms exceeds budget {budget} ms "
+                f"(min {stats.min_ms:.2f}, max {stats.max_ms:.2f}, n={iters})",
                 pytrace=False,
             )
-        return median
+        return stats.median_ms
 
     return measure
+
+
+@pytest.fixture
+def perf_baseline(request, torch_device):
+    """Return ``check(fn, *args, name=None, **options)``: measure latency (and CUDA peak
+    memory) and compare with the recorded baseline for this machine.
+
+    Record baselines with ``--torch-update-perf``. Options: ``latency_tolerance``,
+    ``latency_slack_ms``, ``memory_tolerance``, ``memory_slack_mb``, ``warmup``, ``iters``.
+    Wrap functions that need keyword arguments in a lambda.
+    """
+    from .perf import PerfStore, check_perf
+
+    config = request.config
+    path = config.getoption("torch_perf_file") or Path(config.rootpath) / ".torch-perf-baselines.json"
+    store = PerfStore(path)
+    update = config.getoption("torch_update_perf")
+    strict = config.getoption("torch_perf_strict")
+    default_name = request.node.nodeid.split("[")[0]
+
+    def check(fn, *args, name=None, **options):
+        return check_perf(
+            store, name or default_name, fn, *args,
+            device=torch_device, update=update, strict=strict, **options,
+        )
+
+    return check

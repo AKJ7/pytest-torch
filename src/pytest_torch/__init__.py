@@ -2,11 +2,18 @@
 
 The package root must stay import-light: pytest imports ``pytest_torch.plugin``
 at startup in *every* project where the plugin is installed, so ``torch`` must
-not be imported here. Public helpers are exposed lazily.
-"""
-import importlib
+not be imported here. Public helpers are therefore exposed lazily (PEP 562) and
+mirrored in a ``TYPE_CHECKING`` block so IDEs and type checkers still see them.
 
-__version__ = "0.2.0"
+Not exported here (import them directly): ``pytest_torch.strategies`` needs the
+optional ``hypothesis`` dependency.
+"""
+from __future__ import annotations
+
+import importlib
+from typing import TYPE_CHECKING
+
+__version__ = "0.3.0"
 
 _EXPORTS = {
     # assertions
@@ -38,6 +45,28 @@ _EXPORTS = {
     "AgreementMetrics": "parity",
     "assert_matches_reference": "parity",
     "assert_generation_equal": "parity",
+    # performance
+    "measure_latency": "perf",
+    "measure_peak_memory": "perf",
+    "check_perf": "perf",
+    "PerfStore": "perf",
+    "PerfResult": "perf",
+    # torch.compile health, host-device syncs
+    "assert_no_graph_breaks": "compilation",
+    "assert_no_recompiles": "compilation",
+    "forbid_host_sync": "sync",
+    "assert_no_host_sync": "sync",
+    # nondeterminism
+    "measure_nondeterminism": "nondeterminism",
+    "diagnose_nondeterminism": "nondeterminism",
+    "assert_deterministic": "nondeterminism",
+    "NondeterminismReport": "nondeterminism",
+    "VarianceResult": "nondeterminism",
+    # failure output
+    "save_mismatch_heatmap": "report",
+    "github_annotation": "report",
+    # xdist helpers
+    "FileLock": "parallel",
     # model zoo + seeding helpers
     "ModelLoader": "integrations",
     "seed_everything": "utils",
@@ -45,9 +74,57 @@ _EXPORTS = {
 }
 __all__ = list(_EXPORTS)
 
+if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
+    from .assertions import (
+        assert_tensors_close,
+        assert_outputs_close,
+        assert_finite,
+        assert_batch_invariant,
+    )
+    from .contract import check_inference_contract, ContractReport, CheckResult
+    from .divergence import localize_divergence, DivergenceReport, LayerDiff
+    from .invariance import (
+        assert_padding_invariant,
+        assert_mask_invariant,
+        assert_invariant,
+        assert_equivariant,
+        assert_permutation_invariant,
+        assert_permutation_equivariant,
+    )
+    from .parity import (
+        assert_compile_parity,
+        assert_torchscript_parity,
+        assert_onnx_parity,
+        assert_models_agree,
+        compare_outputs,
+        AgreementMetrics,
+        assert_matches_reference,
+        assert_generation_equal,
+    )
+    from .perf import measure_latency, measure_peak_memory, check_perf, PerfStore, PerfResult
+    from .compilation import assert_no_graph_breaks, assert_no_recompiles
+    from .sync import forbid_host_sync, assert_no_host_sync
+    from .nondeterminism import (
+        measure_nondeterminism,
+        diagnose_nondeterminism,
+        assert_deterministic,
+        NondeterminismReport,
+        VarianceResult,
+    )
+    from .report import save_mismatch_heatmap, github_annotation
+    from .parallel import FileLock
+    from .integrations import ModelLoader
+    from .utils import seed_everything, deterministic_algorithms
 
-def __getattr__(name):
+
+def __getattr__(name: str):
     module = _EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module 'pytest_torch' has no attribute {name!r}")
-    return getattr(importlib.import_module(f".{module}", __name__), name)
+    value = getattr(importlib.import_module(f".{module}", __name__), name)
+    globals()[name] = value  # cache: later lookups skip __getattr__
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted([*globals(), *_EXPORTS])
