@@ -14,6 +14,7 @@ from typing import Any, Callable, Sequence
 
 import torch
 
+from . import tolerances
 from .assertions import format_problems, leaves_diff
 from .utils import call_model, cast_floating, model_device, to_device, tree_map
 
@@ -110,8 +111,8 @@ def assert_gradcheck(
     inputs: Any,
     *,
     eps: float = 1e-6,
-    atol: float = 1e-5,
-    rtol: float = 1e-3,
+    atol: float | None = None,
+    rtol: float | None = None,
 ) -> None:
     """Compare analytical gradients (autograd) with finite differences.
 
@@ -120,6 +121,7 @@ def assert_gradcheck(
     Gradients are checked with respect to the floating-point input tensors. Keep the
     inputs small: the cost grows with their number of elements.
     """
+    rtol, atol = tolerances.for_check("gradcheck", "cpu", rtol, atol)
     if isinstance(fn, torch.nn.Module):
         fn = copy.deepcopy(fn).double()
     inputs = tree_map(

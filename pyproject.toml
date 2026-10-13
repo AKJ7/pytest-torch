@@ -12,7 +12,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "AKJ7" }]
 requires-python = ">=3.9"
-dependencies = ["pytest>=7.0"]
+dependencies = ["pytest>=7.0", "tomli>=1.1; python_version < '3.11'"]
 keywords = ["pytest", "pytorch", "testing", "machine-learning", "deep-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -74,20 +74,6 @@ markers = ["slow: compiles C++ or trains for a while (deselect with -m 'not slow
 # name = "pytorch-cpu"
 # url = "https://download.pytorch.org/whl/cpu"
 # explicit = true
-
-[tool.black]
-line-length = 120
-target-version = ['py310', 'py311', 'py312']
-skip-string-normalization = true
-skip-magic-trailing-comma = false
-exclude = '''
-^/(
-    \.git
-  | \.venv
-  | build
-  | dist
-)
-'''
 
 [tool.ruff]
 target-version = "py312"

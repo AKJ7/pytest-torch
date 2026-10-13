@@ -111,3 +111,54 @@ def test_dtype_parity_opt_in():
         raise_on_failure=False,
     )
     assert statuses(report)["dtype_parity"] == "pass", report.format()
+
+
+# --------------------------------------------------------------------------- #
+# device_parity respects --torch-device
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def fake_gpu(monkeypatch):
+    """Pretend an "mps" device exists (it is never actually used by these tests)."""
+    from pytest_torch import _session, devices
+
+    monkeypatch.setattr(devices, "available_devices", lambda: ["cpu", "mps"])
+    monkeypatch.setattr(devices, "is_available", lambda d: str(d).split(":")[0] in ("cpu", "mps"))
+    monkeypatch.setattr(_session, "selected_devices", None)
+    return _session
+
+
+def test_parity_uses_every_available_device_when_not_pinned(fake_gpu):
+    from pytest_torch.contract import _default_parity_devices
+
+    assert _default_parity_devices(torch.device("cpu")) == ["mps"]
+    assert _default_parity_devices(torch.device("mps")) == ["cpu"]
+
+
+def test_parity_only_uses_pinned_devices(fake_gpu):
+    from pytest_torch.contract import _default_parity_devices
+
+    fake_gpu.selected_devices = ["cpu"]
+    assert _default_parity_devices(torch.device("cpu")) == []
+    fake_gpu.selected_devices = ["cpu", "mps"]
+    assert _default_parity_devices(torch.device("cpu")) == ["mps"]
+    fake_gpu.selected_devices = ["cpu", "cuda"]  # pinned but unavailable: ignored
+    assert _default_parity_devices(torch.device("cpu")) == []
+
+
+def test_pinned_cpu_skips_device_parity_with_a_clear_reason(fake_gpu):
+    fake_gpu.selected_devices = ["cpu"]
+    report = check_inference_contract(make_ok(), torch.randn(4, 8), checks=["device_parity"])
+    (result,) = report.results
+    assert result.status == "skip" and result.message == "no other device selected (--torch-device)"
+
+
+def test_plugin_records_the_pinned_devices(pytester):
+    pytester.makepyfile(
+        """
+        from pytest_torch import _session
+
+        def test_selection():
+            assert _session.selected_devices == ["cpu"]
+        """
+    )
+    pytester.runpytest_subprocess("-p", "no:cacheprovider", "--torch-device=cpu").assert_outcomes(passed=1)

@@ -4226,6 +4226,7 @@ source = { editable = "." }
 dependencies = [
     { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "pytest", version = "9.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -4295,6 +4296,7 @@ requires-dist = [
     { name = "onnxscript", marker = "extra == 'onnx'" },
     { name = "pytest", specifier = ">=7.0" },
     { name = "timm", marker = "extra == 'timm'" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=1.1" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.0" },
     { name = "torchvision", marker = "extra == 'torchvision'" },
     { name = "transformers", marker = "extra == 'hf'" },

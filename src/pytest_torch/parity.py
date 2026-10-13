@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import torch
 
+from . import tolerances
 from .assertions import assert_outputs_close, format_problems, leaves_diff
 from .utils import find_batch_size, flatten, model_device, run_inference, to_device, tree_map
 
@@ -45,8 +46,8 @@ def assert_compile_parity(
     model,
     inputs: Any,
     *,
-    rtol: float = 1e-4,
-    atol: float = 1e-4,
+    rtol: float | None = None,
+    atol: float | None = None,
     runs: int = 2,
     **compile_kwargs,
 ) -> None:
@@ -56,6 +57,7 @@ def assert_compile_parity(
     graph and guards). Extra kwargs go to ``torch.compile``, e.g. ``backend="eager"``
     to test graph capture without needing a C++ compiler.
     """
+    rtol, atol = tolerances.for_check("compile_parity", model_device(model), rtol, atol)
     inputs = to_device(inputs, model_device(model))
     reference = run_inference(model, inputs)
     compiled = torch.compile(model, **compile_kwargs)
@@ -75,8 +77,8 @@ def assert_torchscript_parity(
     inputs: Any,
     *,
     mode: str = "trace",
-    rtol: float = 1e-5,
-    atol: float = 1e-5,
+    rtol: float | None = None,
+    atol: float | None = None,
 ) -> None:
     """Assert the TorchScript version (``mode`` = "trace" or "script") matches eager.
 
@@ -85,6 +87,7 @@ def assert_torchscript_parity(
     """
     if mode not in ("trace", "script"):
         raise ValueError("mode must be 'trace' or 'script'")
+    rtol, atol = tolerances.for_check("torchscript_parity", model_device(model), rtol, atol)
     args = _positional_args(to_device(inputs, model_device(model)))
     reference = run_inference(model, args)
     with torch.no_grad():
@@ -102,8 +105,8 @@ def assert_onnx_parity(
     model,
     inputs: Any,
     *,
-    rtol: float = 1e-3,
-    atol: float = 1e-4,
+    rtol: float | None = None,
+    atol: float | None = None,
     export_kwargs: Mapping[str, Any] | None = None,
     providers: tuple[str, ...] = ("CPUExecutionProvider",),
 ) -> None:
@@ -120,6 +123,7 @@ def assert_onnx_parity(
             "assert_onnx_parity needs onnxruntime: pip install 'pytest-torch[onnx]'"
         ) from exc
 
+    rtol, atol = tolerances.for_check("onnx_parity", "cpu", rtol, atol)
     cpu_model = copy.deepcopy(model).cpu()
     args = _positional_args(to_device(inputs, "cpu"))
     if not all(isinstance(a, torch.Tensor) for a in args):
@@ -251,8 +255,8 @@ def assert_export_parity(
     dynamic_batch: bool = False,
     dynamic_shapes: Any = None,
     strict: bool | None = None,
-    rtol: float = 1e-5,
-    atol: float = 1e-5,
+    rtol: float | None = None,
+    atol: float | None = None,
 ):
     """Export with ``torch.export`` and assert the exported program matches eager.
 
@@ -262,6 +266,7 @@ def assert_export_parity(
     ``torch.export``'s own ``dynamic_shapes``. ``strict`` is forwarded when set.
     Returns the ``ExportedProgram`` (e.g. to save it or lower it further).
     """
+    rtol, atol = tolerances.for_check("export_parity", model_device(model), rtol, atol)
     inputs = to_device(inputs, model_device(model))
     program = _export(model, inputs, dynamic_shapes=dynamic_shapes, dynamic_batch=dynamic_batch, strict=strict)
     _compare_runs(_exported_module(program), model, inputs, more_inputs, "torch.export", rtol=rtol, atol=atol)
@@ -296,8 +301,8 @@ def assert_aoti_parity(
     *more_inputs: Any,
     dynamic_batch: bool = False,
     dynamic_shapes: Any = None,
-    rtol: float = 1e-4,
-    atol: float = 1e-4,
+    rtol: float | None = None,
+    atol: float | None = None,
     inductor_configs: Mapping[str, Any] | None = None,
 ) -> None:
     """Export, compile ahead-of-time with AOTInductor, load the package and compare to eager.
@@ -315,6 +320,7 @@ def assert_aoti_parity(
     if _cxx_compiler() is None:
         pytest.skip("AOTInductor needs a C++ compiler (set CXX or install g++/clang++)")
 
+    rtol, atol = tolerances.for_check("aoti_parity", model_device(model), rtol, atol)
     inputs = to_device(inputs, model_device(model))
     program = _export(model, inputs, dynamic_shapes=dynamic_shapes, dynamic_batch=dynamic_batch, strict=None)
     with tempfile.TemporaryDirectory() as tmp:
@@ -332,8 +338,8 @@ def assert_autocast_parity(
     inputs: Any,
     *,
     dtype: torch.dtype = torch.bfloat16,
-    rtol: float = 2e-2,
-    atol: float = 2e-2,
+    rtol: float | None = None,
+    atol: float | None = None,
 ) -> None:
     """Assert the model under ``torch.autocast(dtype)`` stays close to full precision.
 
@@ -348,6 +354,7 @@ def assert_autocast_parity(
     available = getattr(torch.amp, "is_autocast_available", None)
     if available is not None and not available(device.type):
         pytest.skip(f"autocast is not available on {device.type}")
+    rtol, atol = tolerances.for_check("autocast_parity", device, rtol, atol)
     inputs = to_device(inputs, device)
     reference = run_inference(model, inputs)
     with torch.autocast(device_type=device.type, dtype=dtype):

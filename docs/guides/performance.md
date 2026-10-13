@@ -23,7 +23,8 @@ pytest                         # later runs compare against them
 Baselines live in `.torch-perf-baselines.json`, keyed by test and **hardware fingerprint**,
 so numbers from different machines never mix. A regression is
 `new > baseline * (1 + tolerance) + slack`; faster is never a failure. A missing baseline
-skips the test (`--torch-perf-strict` fails it instead). Peak memory is tracked on CUDA.
+skips the test (`--torch-perf-strict` fails it instead). Peak memory is tracked on CUDA and
+Intel XPU.
 
 ## Host-device syncs
 
@@ -53,8 +54,8 @@ it to `torch_seed`).
 pytest -n 4 --torch-xdist-gpus=0,1 --torch-gpu-memory-fraction=auto
 ```
 
-- Workers are spread round-robin over GPUs; `torch_device` maps `"cuda"` to the worker's
-  `cuda:N` while test ids stay identical.
+- Workers are spread round-robin over GPUs (CUDA or Intel XPU); `torch_device` maps `"cuda"`
+  (or `"xpu"`) to the worker's `cuda:N` (`xpu:N`) while test ids stay identical.
 - `--torch-gpu-memory-fraction=auto` splits each GPU's memory between the workers sharing it.
 - `@pytest.mark.torch_gpu_exclusive` serializes heavy tests per GPU across workers.
 

@@ -1,0 +1,39 @@
+/* Brand colors from docs/assets/logo.png: navy #011D3F, orange #F86C0F, teal #018EA6. */
+:root {
+  --brand-navy: #011d3f;
+  --brand-orange: #f86c0f;
+  --brand-teal: #018ea6;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: var(--brand-navy);
+  --md-primary-fg-color--light: #1b3a63;
+  --md-primary-fg-color--dark: #00122a;
+  --md-accent-fg-color: var(--brand-orange);
+  --md-typeset-a-color: #00768a; /* darker teal: readable on white */
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--brand-navy);
+  --md-primary-fg-color--light: #1b3a63;
+  --md-primary-fg-color--dark: #00122a;
+  --md-accent-fg-color: var(--brand-orange);
+  --md-typeset-a-color: #4fc3d9; /* lighter teal: readable on the dark background */
+}
+
+/* The home page shows the wordmark; its h1 stays for screen readers and the page title. */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.hero-logo {
+  display: block;
+  margin: 0.5rem auto 1.5rem;
+  max-width: min(560px, 100%);
+}

@@ -32,6 +32,9 @@ CHECKS: dict[str, tuple[str, ...]] = {
     "aoti": ("test_aoti_parity",),
     "autocast": ("test_autocast_parity",),
     "golden": ("test_golden",),
+    "output_spec": ("test_output_spec",),
+    "checkpoint": ("test_checkpoint_roundtrip",),
+    "layouts": ("test_layout_invariance",),
     "training": (
         "test_gradients_finite",
         "test_all_params_receive_grad",
@@ -62,6 +65,8 @@ class ModelSuite:
     check_options: ClassVar[dict[str, dict[str, Any]]] = {}
     #: also export with a dynamic batch dim and run a smaller batch through the program
     dynamic_batch: ClassVar[bool] = False
+    #: for the "output_spec" check: a spec as for assert_output_spec; "B" is the batch size
+    output_spec: ClassVar[Any] = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -77,6 +82,8 @@ class ModelSuite:
             )
         if "training" in cls.checks and cls.loss is ModelSuite.loss:
             raise TypeError(f"{cls.__name__}: the 'training' checks need a loss(self, output, inputs) method")
+        if "output_spec" in cls.checks and cls.output_spec is None:
+            raise TypeError(f"{cls.__name__}: the 'output_spec' check needs an output_spec attribute")
         # Disabled checks disappear (None is not collected); enabled ones come back from
         # the base class unless this class defines its own version.
         for check, methods in CHECKS.items():
@@ -107,9 +114,13 @@ class ModelSuite:
         return {**_DEFAULT_OPTIONS.get(test, {}), **self.check_options.get(test, {})}
 
     def _setup(self, torch_device, make_tensor, *, train: bool = False):
+        from .repro import record_repro
+
         model = self.make_model().to(torch_device)
         model = model.train() if train else model.eval()
-        return model, self.make_inputs(make_tensor)
+        # Part of the failure bundle under --torch-repro-dir (weights if small enough).
+        model = record_repro("model", model)
+        return model, record_repro("inputs", self.make_inputs(make_tensor))
 
     def _loss_fn(self, inputs):
         return lambda output: self.loss(output, inputs)
@@ -188,6 +199,28 @@ class ModelSuite:
         path = request.node.path.parent / "__golden__" / f"{type(self).__name__}.pt"
         golden = Golden(path, update=request.config.getoption("torch_update_golden"))
         golden.check(run_inference(model, inputs), **{"atol": 1e-4, **self.options("golden")})
+
+    def test_output_spec(self, torch_seed, torch_device, make_tensor):
+        from .specs import assert_output_spec
+        from .utils import find_batch_size, run_inference
+
+        model, inputs = self._setup(torch_device, make_tensor)
+        dims = {"B": find_batch_size(inputs)} if find_batch_size(inputs) is not None else {}
+        assert_output_spec(run_inference(model, inputs), self.output_spec, **{**dims, **self.options("output_spec")})
+
+    def test_checkpoint_roundtrip(self, torch_seed, torch_device, make_tensor):
+        from .checkpoint import assert_checkpoint_roundtrip
+
+        model, inputs = self._setup(torch_device, make_tensor)
+        assert_checkpoint_roundtrip(
+            lambda: self.make_model().to(torch_device), inputs, model=model, **self.options("checkpoint_roundtrip")
+        )
+
+    def test_layout_invariance(self, torch_seed, torch_device, make_tensor):
+        from .invariance import assert_layout_invariant
+
+        model, inputs = self._setup(torch_device, make_tensor)
+        assert_layout_invariant(model, inputs, **self.options("layout_invariance"))
 
     def test_gradients_finite(self, torch_seed, torch_device, make_tensor):
         from .training import assert_gradients_finite

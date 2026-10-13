@@ -256,3 +256,67 @@ def assert_mask_invariant(
     expected = {p: select(l) for p, l in flatten(run_inference(model, inputs))}
     actual = {p: select(l) for p, l in flatten(run_inference(model, changed))}
     _check(actual, expected, "Mask invariance violated (masked tokens leak)", rtol=rtol, atol=atol)
+
+
+# --------------------------------------------------------------------------- #
+# Memory layouts
+# --------------------------------------------------------------------------- #
+def noncontiguous(t: torch.Tensor) -> torch.Tensor:
+    """Same values and shape as ``t``, but not contiguous in memory.
+
+    With 2+ dims the last two are stored column-major (like a transposed tensor), so
+    ``.view()`` across them fails just as it would on real transposed data; 1-D tensors
+    become a strided view.
+    """
+    if t.dim() == 0 or t.numel() <= 1:
+        return t
+    if t.dim() >= 2 and t.shape[-1] > 1 and t.shape[-2] > 1:
+        return t.transpose(-1, -2).contiguous().transpose(-1, -2)
+    holder = t.new_empty(*t.shape, 2)
+    view = holder[..., 0]
+    view.copy_(t)
+    return view
+
+
+def _relayout(obj: Any, layout: str) -> Any:
+    if layout == "noncontiguous":
+        return tree_map(noncontiguous, obj)
+    if layout == "channels_last":
+        return tree_map(lambda t: t.contiguous(memory_format=torch.channels_last) if t.dim() == 4 else t, obj)
+    raise ValueError(f"unknown layout {layout!r}; use 'noncontiguous' or 'channels_last'")
+
+
+def assert_layout_invariant(
+    model,
+    inputs: Any,
+    *,
+    layouts: tuple[str, ...] = ("noncontiguous", "channels_last"),
+    rtol: float | None = None,
+    atol: float | None = None,
+) -> None:
+    """Assert outputs don't depend on the memory layout of the inputs.
+
+    Each layout gets copies of the inputs with identical values: ``"noncontiguous"``
+    (strided views; catches ``.view()`` on non-contiguous tensors and kernels that assume
+    contiguity) and ``"channels_last"`` (for 4-D inputs; skipped if there are none).
+    Tolerance: the ``layout_invariance`` default, since kernels may legitimately differ
+    by rounding between layouts.
+    """
+    from . import tolerances
+
+    device = model_device(model)
+    rtol, atol = tolerances.for_check("layout_invariance", device, rtol, atol)
+    inputs = to_device(inputs, device)
+    expected = dict(flatten(run_inference(model, inputs)))
+    tensors = [leaf for _, leaf in flatten(inputs, "inputs") if isinstance(leaf, torch.Tensor)]
+    for layout in layouts:
+        if layout == "channels_last" and not any(t.dim() == 4 for t in tensors):
+            continue
+        try:
+            actual = dict(flatten(run_inference(model, _relayout(inputs, layout))))
+        except RuntimeError as exc:
+            raise AssertionError(
+                f"Model fails on {layout} inputs: {type(exc).__name__}: {exc}\n"
+                "Hint: use .reshape() instead of .view(), or call .contiguous() where needed."
+            ) from exc
+        _check(actual, expected, f"Output changes with {layout} inputs", rtol=rtol, atol=atol)

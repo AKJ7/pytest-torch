@@ -14,14 +14,12 @@ from typing import Any, Callable
 import pytest
 import torch
 
+from . import devices
+
 
 def sync(device: Any) -> None:
     """Wait for all queued work on ``device`` (no-op on CPU)."""
-    kind = torch.device(device).type
-    if kind == "cuda":
-        torch.cuda.synchronize(device)
-    elif kind == "mps":
-        torch.mps.synchronize()
+    devices.synchronize(device)
 
 
 @dataclass
@@ -50,23 +48,25 @@ def measure_latency(
 
 
 def measure_peak_memory(fn: Callable, *args, device: Any = "cpu", **kwargs) -> float | None:
-    """Peak extra allocated memory in MB during one call. CUDA only; ``None`` elsewhere."""
-    if torch.device(device).type != "cuda":
+    """Peak extra allocated memory in MB during one call. CUDA and XPU; ``None`` elsewhere."""
+    if not devices.supports_memory_stats(device):
         return None
+    backend = devices.backend(device)
     sync(device)
-    torch.cuda.reset_peak_memory_stats(device)
-    baseline = torch.cuda.memory_allocated(device)
+    backend.reset_peak_memory_stats(device)
+    baseline = backend.memory_allocated(device)
     with torch.inference_mode():
         fn(*args, **kwargs)
     sync(device)
-    return (torch.cuda.max_memory_allocated(device) - baseline) / 2**20
+    return (backend.max_memory_allocated(device) - baseline) / 2**20
 
 
 def hardware_id(device: Any) -> str:
     """Fingerprint that keys baselines, so numbers from different machines never mix."""
     dev = torch.device(device)
-    if dev.type == "cuda":
-        return f"cuda:{torch.cuda.get_device_name(dev)}"
+    name = devices.device_name(dev)
+    if name is not None:
+        return f"{dev.type}:{name}"
     cpu = platform.processor() or platform.machine()
     return f"{dev.type}:{platform.system()}-{platform.machine()}-{cpu}-{os.cpu_count()}c"
 
@@ -140,7 +140,7 @@ def check_perf(
     A regression is ``new > baseline * (1 + tolerance) + slack`` (the slack keeps tiny
     absolute differences from failing). Faster/leaner is never a failure. A missing
     baseline skips the test (or fails with ``strict=True``); ``update=True`` records one.
-    Peak memory is tracked on CUDA only.
+    Peak memory is tracked on CUDA and XPU only.
     """
     stats = measure_latency(fn, *args, device=device, warmup=warmup, iters=iters)
     peak = measure_peak_memory(fn, *args, device=device)

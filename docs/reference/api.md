@@ -14,6 +14,34 @@ Everything below is importable from `pytest_torch` directly, e.g.
       show_root_heading: false
       members: [assert_tensors_close, assert_outputs_close, assert_finite, assert_batch_invariant]
 
+## Output specifications
+
+::: pytest_torch.specs
+    options:
+      show_root_heading: false
+      members: [assert_output_spec, TensorSpec, Probabilities]
+
+## Checkpoints
+
+::: pytest_torch.checkpoint
+    options:
+      show_root_heading: false
+      members: [assert_checkpoint_roundtrip, assert_checkpoint_loads]
+
+## Dataset evaluation
+
+::: pytest_torch.evaluation
+    options:
+      show_root_heading: false
+      members: [evaluate, check_metrics, MetricResult]
+
+## Failure reproduction
+
+::: pytest_torch.repro
+    options:
+      show_root_heading: false
+      members: [record_repro, load_repro]
+
 ## Inference contract
 
 ::: pytest_torch.contract
@@ -28,7 +56,7 @@ Everything below is importable from `pytest_torch` directly, e.g.
       show_root_heading: false
       members: [localize_divergence, DivergenceReport, LayerDiff]
 
-## Invariance
+## Invariance and layouts
 
 ::: pytest_torch.invariance
     options:
@@ -81,5 +109,15 @@ Everything below is importable from `pytest_torch` directly, e.g.
     options:
       show_root_heading: false
       members: [seed_everything, deterministic_algorithms, is_compile_supported]
+
+::: pytest_torch.tolerances
+    options:
+      show_root_heading: false
+      members: [tolerance_overrides]
+
+::: pytest_torch.devices
+    options:
+      show_root_heading: false
+      members: [available_devices]
 
 ::: pytest_torch.integrations.ModelLoader

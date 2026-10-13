@@ -1,4 +1,7 @@
-# pytest-torch
+# pytest-torch { .visually-hidden }
+
+![pytest-torch](assets/logo.png#only-light){ .hero-logo }
+![pytest-torch](assets/logo-dark.png#only-dark){ .hero-logo }
 
 **Test PyTorch models like you mean it.** `pytest-torch` is a pytest plugin that turns the
 tedious, easy-to-get-wrong parts of model testing into one-liners: device parametrization,

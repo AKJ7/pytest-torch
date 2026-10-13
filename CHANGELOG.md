@@ -45,13 +45,15 @@ class TestClassifier(ModelSuite):
 
 | Fixture | What it gives you |
 |---|---|
-| `torch_device` | Runs the test on every available device (CPU, CUDA, MPS); unavailable ones are skipped |
+| `torch_device` | Runs the test on every available device (CPU, CUDA, Intel XPU, Apple MPS); unavailable ones are skipped |
 | `torch_seed` | Seeds `random`, `numpy` and `torch`; the seed is printed when the test fails |
 | `torch_generator` | A seeded CPU generator, so the same seed gives identical values on every device |
 | `make_tensor` | Reproducible tensors (normal, uniform or integer), drawn on the CPU and moved to the device |
 | `inference_mode` | Runs the test body under `torch.inference_mode()` |
 | `golden` | Snapshot tests of tensors and nested outputs |
+| `torch_dtype` | Runs the test once per dtype (default float32; `--torch-dtype` or `@pytest.mark.torch_dtypes`) |
 | `latency`, `perf_baseline` | Latency budgets and performance regression checks |
+| `metric_baseline` | Dataset metrics compared with a stored baseline and thresholds |
 | `model_loader` | Session-cached Hugging Face, timm and torchvision models |
 
 - **Device selection:** `--torch-device` pins one or more devices.
@@ -62,6 +64,28 @@ class TestClassifier(ModelSuite):
 - **Golden files:** `pytest --torch-update-golden` writes them. They store nested outputs
   by path and record the torch version, which is shown when a comparison fails. A missing
   golden file fails the test, so CI can't pass without comparing anything.
+
+### Project-wide tolerances
+
+Set default tolerances once in `pyproject.toml` instead of repeating `rtol=`/`atol=` in
+every test:
+
+```toml
+[tool.pytest_torch.tolerance]
+bfloat16 = { rtol = 2e-2, atol = 1e-2 }          # any comparison of bf16 tensors
+"cuda.float32" = { rtol = 1e-4, atol = 1e-5 }    # only when testing on CUDA (TF32)
+compile_parity = { rtol = 1e-3, atol = 1e-3 }    # default of assert_compile_parity
+```
+
+- **Keys:** a dtype, a check (`compile_parity`, `export_parity`, `device_parity`,
+  `autocast_parity`, `gradcheck` and others), or either prefixed with a device. An entry
+  may set only `rtol` or only `atol`.
+- **One test, class or module:** `@pytest.mark.torch_tolerance(bfloat16=(5e-2, 1e-2))`.
+  For a block of code, use `with tolerance_overrides(...)`.
+- **Precedence:** an argument passed to the assertion wins, then the marker, then
+  `pyproject.toml`, then the built-in default.
+- **Mistakes** in the config stop pytest at startup with a message saying what is wrong,
+  and failure messages always print the tolerance that was used.
 
 ### Assertions with readable failures
 
@@ -85,7 +109,8 @@ pass, and gives a likely cause for each failure:
 - **`finite_outputs`:** no NaN or Inf in the outputs.
 - **`deterministic`:** two runs give identical outputs.
 - **`batch_invariance`:** a sample's output doesn't depend on the rest of the batch.
-- **`device_parity`:** results match on the other available devices.
+- **`device_parity`:** results match on the other available devices, or only on the other
+  devices pinned with `--torch-device`.
 - **`dtype_parity`:** results stay close at lower precision. It only runs if you ask for it,
   for example with `dtypes=(torch.bfloat16,)`.
 - **`no_state_mutation`:** inference didn't change any parameter or buffer.
@@ -155,18 +180,79 @@ where `loss_fn(output)` returns a scalar.
 The checks that run optimizer steps train a copy, so the model you pass in is never
 modified. They return a `TrainingRun` with the loss curve.
 
+### Output specifications
+
+`assert_output_spec(output, spec)` checks shapes, dtypes, finite values, value ranges and
+probability normalization in one call, reporting every problem with its output path.
+
+```python
+spec = {"logits": TensorSpec(("B", "T", 5), dtype=torch.float32), "probs": Probabilities(("B", "T", 5))}
+assert_output_spec(model(ids), spec, B=4)
+```
+
+- **Shapes** take exact sizes, symbolic dims (`"B"`: the same size everywhere), `None`
+  (any size) and `...` (any number of dims).
+- **`Probabilities`** checks values in [0, 1] summing to 1 along a dim, or
+  log-probabilities with `log=True`.
+- **In a `ModelSuite`**, set `output_spec` and add the `output_spec` check.
+
+### Checkpoints
+
+- **`assert_checkpoint_roundtrip`** saves the `state_dict`, reloads it into a fresh model
+  built under a different seed, and requires identical outputs. When they differ, it names
+  the likely culprits: tensors stored as plain attributes, non-persistent buffers, tied
+  weights that came apart. It supports `torch.save` and safetensors.
+- **`assert_checkpoint_loads`** loads an existing checkpoint into the current code and lists
+  every missing, unexpected and reshaped key at once. It runs the model's own compatibility
+  code and suggests `strip_prefix="module."` for DataParallel/DDP checkpoints.
+- **In a `ModelSuite`**, add the `checkpoint` check.
+
+### Dataset metrics
+
+- **`metric_baseline`** runs a loader through the model, aggregates metrics and fails when
+  one gets worse than its recorded baseline by more than a tolerance. Record baselines with
+  `--torch-update-metrics`. Fixed `minimum`/`maximum` thresholds apply on every run.
+- **Metrics** are averaged weighted by batch size, or computed by objects with
+  `update`/`compute` for metrics that need every prediction (F1, AUC).
+- **`evaluate()`** is the same loop without a baseline.
+
+### Failure reproduction bundles
+
+- **Recording:** `--torch-repro-dir=DIR` writes a bundle for every failing test. It holds
+  the test id and parameters, seed, device, every `make_tensor` output, values passed to
+  `record_repro()`, the active tolerances and the environment.
+- **Replaying:** `--torch-repro=BUNDLE` reruns just that test with the same seed and exactly
+  the same inputs, on any machine, and lists environment differences. Add `--torch-device`
+  to replay a GPU failure on the CPU.
+- **Weights** are stored only up to `--torch-repro-max-weights-mb`.
+
+### Device and dtype matrix
+
+- **`torch_dtype`** runs a test once per dtype, for example
+  `@pytest.mark.torch_dtypes(torch.float32, torch.bfloat16)`. Dtypes a device can't run at
+  all are skipped.
+- **`make_tensor`** follows the dtype, and comparison tolerances follow it too.
+
+### Unusual inputs
+
+- **`assert_layout_invariant`** checks that non-contiguous and `channels_last` copies of the
+  inputs give the same outputs. It catches `.view()` on non-contiguous tensors and
+  layout-specific kernel bugs. In a `ModelSuite`, add the `layouts` check.
+
 ### Property-based testing
 
 `pytest_torch.strategies` provides Hypothesis strategies for tensors and shapes. Generated
-tensors deliberately include edge cases (all zeros, constants, extreme values, tiny values)
-and can optionally contain NaN or Inf. This needs the `hypothesis` extra.
+tensors deliberately include edge cases (all zeros, constants, extreme values, tiny values),
+can optionally contain NaN or Inf, and can come in non-contiguous or `channels_last`
+layouts. `padded_batches()` draws ragged `input_ids`/`attention_mask` batches covering
+length-1, full-length and all-padding-but-one cases. This needs the `hypothesis` extra.
 
 ### Performance, compilation and determinism
 
 - **Latency budgets:** `@pytest.mark.torch_max_latency(ms=...)` with the `latency`
   fixture. Measurements include warmup and device synchronization.
 - **Regression baselines:** the `perf_baseline` fixture records latency, and peak memory
-  on CUDA, once per machine with `--torch-update-perf`, then compares later runs against
+  on CUDA and XPU, once per machine with `--torch-update-perf`, then compares later runs against
   that record. Baselines are stored per test and per hardware, so numbers from different
   machines never mix.
 - **`torch.compile` health:** `assert_no_graph_breaks` and `assert_no_recompiles` check
@@ -187,7 +273,7 @@ These need the `hf`, `timm` and `torchvision` extras.
 ### Parallel runs and CI
 
 - **pytest-xdist:**
-  - `--torch-xdist-gpus` spreads workers across GPUs.
+  - `--torch-xdist-gpus` spreads workers across CUDA or Intel XPU GPUs.
   - `--torch-gpu-memory-fraction=auto` splits each GPU's memory between the workers that
     share it.
   - `@pytest.mark.torch_gpu_exclusive` makes heavy tests take turns on each GPU.

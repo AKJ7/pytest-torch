@@ -8,6 +8,7 @@ from typing import Any
 
 import torch
 
+from . import tolerances
 from .utils import (
     batch_aligned,
     call_model,
@@ -17,14 +18,8 @@ from .utils import (
     slice_batch,
 )
 
-# (rtol, atol) per dtype, mirroring torch.testing defaults.
-_DEFAULT_TOLERANCES = {
-    torch.float64: (1e-7, 1e-7),
-    torch.float32: (1.3e-6, 1e-5),
-    torch.float16: (1e-3, 1e-5),
-    torch.bfloat16: (1.6e-2, 1e-5),
-}
-_FALLBACK_TOLERANCE = (1.3e-6, 1e-5)
+# Python floats in nested outputs are compared like float32 tensors.
+_FALLBACK_TOLERANCE = tolerances.FALLBACK
 
 
 class BatchInvarianceNotApplicable(ValueError):
@@ -67,11 +62,8 @@ def _tensor_diff(
     if check_device and actual.device != expected.device:
         return f"Device mismatch: {actual.device} != {expected.device}"
 
-    default_rtol, default_atol = _DEFAULT_TOLERANCES.get(
-        actual.dtype, _FALLBACK_TOLERANCE
-    )
-    rtol = default_rtol if rtol is None else rtol
-    atol = default_atol if atol is None else atol
+    # Defaults per dtype: built-in, overridable in pyproject.toml or with a marker.
+    rtol, atol = tolerances.for_dtype(actual.dtype, actual.device, rtol, atol)
 
     if actual.numel() == 0:
         return None

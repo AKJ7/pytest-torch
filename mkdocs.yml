@@ -7,6 +7,8 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  logo: assets/icon-dark.png      # light variant: the header is navy
+  favicon: assets/icon.png
   features:
     - content.code.copy
     - navigation.sections
@@ -15,10 +17,17 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom             # brand colors: docs/stylesheets/extra.css
+      accent: custom
       toggle: { icon: material/weather-night, name: Dark mode }
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle: { icon: material/weather-sunny, name: Light mode }
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
@@ -50,9 +59,15 @@ nav:
   - Getting started: getting-started.md
   - Guides:
       - Generated test suites: guides/model-suite.md
+      - Tolerances: guides/tolerances.md
       - Inference correctness: guides/inference.md
+      - Output specifications: guides/output-specs.md
+      - Devices, dtypes and unusual inputs: guides/matrix.md
       - Deployment parity: guides/deployment.md
+      - Checkpoints: guides/checkpoints.md
       - Training sanity: guides/training.md
+      - Dataset metrics: guides/dataset-metrics.md
+      - Failure reproduction: guides/repro.md
       - Performance and determinism: guides/performance.md
       - Recipes: guides/recipes.md
   - Reference:

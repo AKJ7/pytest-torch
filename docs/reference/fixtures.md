@@ -2,10 +2,12 @@
 
 | Fixture | What it gives you |
 |---|---|
-| `torch_device` | Parametrizes the test over the available devices (skips unavailable ones) |
+| `torch_device` | Parametrizes the test over the available devices: `cpu`, `cuda`, `xpu`, `mps` (skips unavailable ones) |
 | `torch_seed` | Seeds `random`, `numpy` and `torch`; yields the seed, printed when the test fails |
 | `torch_generator` | A seeded **CPU** `Generator`: the same seed gives identical values on every device |
 | `make_tensor` | Reproducible tensors, generated on the CPU and moved to the device |
+| `torch_dtype` | Parametrizes the test over dtypes (default float32; `--torch-dtype`, `@pytest.mark.torch_dtypes`) |
+| `metric_baseline` | Dataset metrics compared with a stored baseline and thresholds |
 | `inference_mode` | Runs the test under `torch.inference_mode()` |
 | `golden` | Snapshot testing of tensors and nested outputs |
 | `latency` | Median latency with warmup and device sync, with an optional budget marker |

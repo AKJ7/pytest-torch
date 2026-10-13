@@ -88,6 +88,23 @@ _EXPORTS = {
     "seed_everything": "utils",
     "deterministic_algorithms": "utils",
     "is_compile_supported": "utils",
+    "available_devices": "devices",
+    "tolerance_overrides": "tolerances",
+    # output specs
+    "TensorSpec": "specs",
+    "Probabilities": "specs",
+    "assert_output_spec": "specs",
+    # failure reproduction
+    "record_repro": "repro",
+    "load_repro": "repro",
+    # checkpoints
+    "assert_checkpoint_roundtrip": "checkpoint",
+    "assert_checkpoint_loads": "checkpoint",
+    # layouts
+    "assert_layout_invariant": "invariance",
+    # dataset evaluation
+    "evaluate": "evaluation",
+    "MetricResult": "evaluation",
 }
 __all__ = list(_EXPORTS)
 
@@ -144,6 +161,13 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .parallel import FileLock
     from .integrations import ModelLoader
     from .utils import seed_everything, deterministic_algorithms, is_compile_supported
+    from .devices import available_devices
+    from .tolerances import tolerance_overrides
+    from .specs import TensorSpec, Probabilities, assert_output_spec
+    from .repro import record_repro, load_repro
+    from .checkpoint import assert_checkpoint_roundtrip, assert_checkpoint_loads
+    from .invariance import assert_layout_invariant
+    from .evaluation import evaluate, MetricResult
 
 
 def __getattr__(name: str):

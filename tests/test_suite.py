@@ -159,3 +159,43 @@ def test_configuration_errors_are_reported_at_collection(pytester, body, message
     result = run(pytester, f"\nclass TestNet(ModelSuite):\n    {body}\n")
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines([f"*{message.replace('[', '[[]')}*"])
+
+
+def test_output_spec_checkpoint_and_layout_checks(pytester):
+    result = run(
+        pytester,
+        """
+from pytest_torch import Probabilities, TensorSpec
+
+
+class Heads(Net):
+    def forward(self, x):
+        logits = self.body(x)
+        return {"logits": logits, "probs": logits.softmax(-1)}
+
+
+class TestNet(ModelSuite):
+    checks = ("output_spec", "checkpoint", "layouts")
+    output_spec = {"logits": TensorSpec(("B", 3), dtype=torch.float32), "probs": Probabilities(("B", 3))}
+
+    def make_model(self):
+        return Heads()
+
+    def make_inputs(self, make_tensor):
+        return make_tensor(8, 8)
+
+
+class TestWrongSpec(TestNet):
+    checks = ("output_spec",)
+    output_spec = {"logits": TensorSpec(("B", 4))}
+""",
+        "-v",
+    )
+    result.assert_outcomes(passed=3, failed=1)
+    result.stdout.fnmatch_lines(["*TestWrongSpec::test_output_spec*", "*dim 1 is 3, expected 4*"])
+
+
+def test_output_spec_check_needs_a_spec(pytester):
+    result = run(pytester, '\nclass TestNet(ModelSuite):\n    checks = ("output_spec",)\n')
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*needs an output_spec attribute*"])

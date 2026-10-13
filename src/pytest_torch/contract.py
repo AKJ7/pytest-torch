@@ -13,6 +13,7 @@ from typing import Any, Callable, Sequence
 
 import torch
 
+from . import tolerances
 from .assertions import (
     BatchInvarianceNotApplicable,
     assert_finite,
@@ -134,15 +135,17 @@ def _snapshot_state(model: torch.nn.Module) -> dict[str, torch.Tensor]:
 
 
 def _default_parity_devices(current: torch.device) -> list[str]:
+    """Devices to compare against: the other available ones, or, when the session pinned
+    devices with ``--torch-device``, only the other pinned ones."""
+    from . import _session
+    from .devices import available_devices, is_available
+
+    if _session.selected_devices is not None:
+        candidates = [d for d in _session.selected_devices if is_available(d)]
+        return [d for d in candidates if torch.device(d).type != current.type]
     if current.type != "cpu":
         return ["cpu"]
-    devices = []
-    if torch.cuda.is_available():
-        devices.append("cuda")
-    mps = getattr(torch.backends, "mps", None)
-    if mps is not None and mps.is_available():
-        devices.append("mps")
-    return devices
+    return [d for d in available_devices() if d != "cpu"]
 
 
 def _to_cpu(obj: Any) -> Any:
@@ -175,11 +178,11 @@ def check_inference_contract(
     rtol: float | None = None,
     atol: float | None = None,
     devices: Sequence[str] | None = None,
-    device_rtol: float = 1e-4,
-    device_atol: float = 1e-4,
+    device_rtol: float | None = None,
+    device_atol: float | None = None,
     dtypes: Sequence[torch.dtype] = (),
-    dtype_rtol: float = 2e-2,
-    dtype_atol: float = 2e-2,
+    dtype_rtol: float | None = None,
+    dtype_atol: float | None = None,
     raise_on_failure: bool = True,
 ) -> ContractReport:
     """Run a battery of inference checks and return a :class:`ContractReport`.
@@ -201,6 +204,8 @@ def check_inference_contract(
 
     is_module = isinstance(model, torch.nn.Module)
     device = model_device(model)
+    device_rtol, device_atol = tolerances.for_check("device_parity", device, device_rtol, device_atol)
+    dtype_rtol, dtype_atol = tolerances.for_check("dtype_parity", device, dtype_rtol, dtype_atol)
     inputs = to_device(inputs, device)
     snapshot = _snapshot_state(model) if is_module else {}
     reference = _run(model, inputs)  # if the forward pass itself fails, let it raise
@@ -233,7 +238,10 @@ def check_inference_contract(
     def device_parity() -> None:
         targets = list(devices) if devices is not None else _default_parity_devices(device)
         if not targets:
-            raise _Skip("no other device available")
+            from . import _session
+
+            pinned = _session.selected_devices is not None
+            raise _Skip("no other device selected (--torch-device)" if pinned else "no other device available")
         failures = []
         ref_cpu = dict(flatten(_to_cpu(reference)))
         for target in targets:

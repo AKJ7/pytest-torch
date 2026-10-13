@@ -16,6 +16,7 @@ from typing import Any, Mapping
 
 import torch
 
+from . import tolerances
 from .utils import call_model, cast_floating, flatten, model_device, model_dtype, to_device
 
 _INF = float("inf")
@@ -192,8 +193,8 @@ def localize_divergence(
     inputs: Any,
     *,
     inputs_b: Any = None,
-    rtol: float = 1e-4,
-    atol: float = 1e-4,
+    rtol: float | None = None,
+    atol: float | None = None,
     module_map: Mapping[str, str] | None = None,
     leaf_only: bool = True,
 ) -> DivergenceReport:
@@ -204,6 +205,7 @@ def localize_divergence(
     ``module_map`` maps names in ``model_a`` to names in ``model_b`` when they differ.
     ``leaf_only=False`` also records container modules.
     """
+    rtol, atol = tolerances.for_check("divergence", model_device(model_b), rtol, atol)
     module_map = dict(module_map or {})
     inputs_a = to_device(inputs, model_device(model_a))
     b_inputs = to_device(inputs if inputs_b is None else inputs_b, model_device(model_b))

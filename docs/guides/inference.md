@@ -44,6 +44,8 @@ Inference contract: 4 passed, 1 failed, 2 skipped
   [PASS] no_state_mutation
 ```
 
+`device_parity` compares against the other available devices; when `--torch-device` pins
+devices, only against the other pinned ones, so `--torch-device=cpu` never touches a GPU.
 Select checks with `checks=[...]` / `skip=[...]`; tune tolerances with `rtol`,
 `device_rtol`, `dtype_rtol`, ...
 

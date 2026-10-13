@@ -48,6 +48,9 @@ test_models.py::TestTextClassifier::test_gradients_finite[cpu] PASSED
 | `aoti` | `test_aoti_parity` | `assert_aoti_parity` (compiles C++) |
 | `autocast` | `test_autocast_parity` | `assert_autocast_parity` |
 | `golden` | `test_golden` | golden file `__golden__/<ClassName>.pt` |
+| `output_spec` | `test_output_spec` | [`assert_output_spec`](output-specs.md) with the class's `output_spec`; `B` = batch size |
+| `checkpoint` | `test_checkpoint_roundtrip` | [`assert_checkpoint_roundtrip`](checkpoints.md) |
+| `layouts` | `test_layout_invariance` | [`assert_layout_invariant`](matrix.md#memory-layouts) |
 | `training` | `test_gradients_finite`, `test_all_params_receive_grad`, `test_loss_decreases`, `test_overfits_one_batch` | [training sanity](training.md); needs `loss()` |
 
 Checks you don't list don't exist on the class at all (no wall of skips). Compile, export

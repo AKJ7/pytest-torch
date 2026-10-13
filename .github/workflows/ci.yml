@@ -22,7 +22,10 @@ jobs:
           - { os: ubuntu-latest, python: "3.12", torch_spec: "torch==2.6.*" }
           - { os: ubuntu-latest, python: "3.13", torch_spec: "torch" }
           - { os: windows-latest, python: "3.12", torch_spec: "torch" }
-          - { os: macos-latest, python: "3.12", torch_spec: "torch" }
+          # GitHub's macOS runners are VMs whose GPU gives wrong MPS results (NaN, Inf,
+          # outputs that change between runs), so test on the CPU there. MPS coverage
+          # needs a real Mac (self-hosted runner).
+          - { os: macos-latest, python: "3.12", torch_spec: "torch", pytest_args: "--torch-device=cpu" }
     steps:
       - uses: actions/checkout@v4
 
@@ -46,15 +49,15 @@ jobs:
 
       # Dogfooding: annotations on failing tests + mismatch heatmaps as artifacts.
       - name: Run tests
-        run: uv run --no-sync pytest tests -ra -m "not slow" --torch-github-annotations --torch-failure-artifacts=failure-artifacts
+        run: uv run --no-sync pytest tests -ra -m "not slow" --torch-github-annotations --torch-failure-artifacts=failure-artifacts ${{ matrix.pytest_args }}
 
       - name: Run examples
-        run: uv run --no-sync pytest examples -ra -m "not slow" --torch-github-annotations --torch-failure-artifacts=failure-artifacts
+        run: uv run --no-sync pytest examples -ra -m "not slow" --torch-github-annotations --torch-failure-artifacts=failure-artifacts ${{ matrix.pytest_args }}
 
       # AOTInductor compiles C++: once, on the newest torch, where g++ is available.
       - name: Run slow tests
         if: matrix.os == 'ubuntu-latest' && matrix.torch_spec == 'torch'
-        run: uv run --no-sync pytest tests examples -ra -m slow --torch-github-annotations
+        run: uv run --no-sync pytest tests examples -ra -m slow --torch-github-annotations ${{ matrix.pytest_args }}
 
       - name: Upload failure artifacts
         if: failure()

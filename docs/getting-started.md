@@ -36,7 +36,7 @@ def test_contract(model, make_tensor):
 ```
 
 ```bash
-pytest                           # runs on cpu, cuda and mps, whichever exist
+pytest                           # runs on cpu, cuda, xpu and mps, whichever exist
 pytest --torch-device=cpu        # pin a device
 ```
 
