@@ -12,12 +12,19 @@ classifiers = ["Framework :: Pytest"]
 
 [project.optional-dependencies]
 torch = ["torch>=2.0"]
+hypothesis = ["hypothesis>=6"]
+# onnxscript: needed by recent torch versions whose default ONNX exporter is dynamo-based
+onnx = ["onnx", "onnxruntime", "onnxscript"]
+hf = ["transformers"]
+timm = ["timm"]
+torchvision = ["torchvision"]
 
 [project.entry-points.pytest11]
 pytest_torch = "pytest_torch.plugin"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.141.1",
     "numpy>=2.0.2",
     "pydantic>=2.13.5",
     "ruff>=0.17.0",

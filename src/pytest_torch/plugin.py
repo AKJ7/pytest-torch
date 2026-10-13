@@ -6,14 +6,13 @@ so projects that don't use torch pay nothing at collection time.
 from __future__ import annotations
 
 import importlib.metadata
-import random
 import statistics
 import time
+import zlib
 
 import pytest
 
-# from src.pytest_torch.golden import Golden
-from pytest_torch.golden import Golden
+from .golden import Golden
 
 
 # --------------------------------------------------------------------------- #
@@ -30,7 +29,19 @@ def pytest_addoption(parser):
         "Default: all available (cpu/cuda/mps).",
     )
     group.addoption(
-        "--torch-seed", type=int, default=0, help="Seed used by `torch_seed`."
+        "--torch-seed", type=int, default=0, help="Base seed used by `torch_seed`."
+    )
+    group.addoption(
+        "--torch-seed-mode",
+        choices=("fixed", "per-test"),
+        default="fixed",
+        help="'fixed': every test gets --torch-seed. 'per-test': a stable seed derived "
+        "from --torch-seed and the test id, so tests are independent but reproducible.",
+    )
+    group.addoption(
+        "--torch-autoseed",
+        action="store_true",
+        help="Seed before every test, even if it does not request `torch_seed`.",
     )
     group.addoption(
         "--torch-deterministic",
@@ -51,6 +62,9 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "torch_max_latency(ms): median latency budget enforced by `latency`"
+    )
+    config.addinivalue_line(
+        "markers", "torch_seed(n): seed used by `torch_seed` for this test"
     )
 
 
@@ -122,33 +136,97 @@ def torch_device(request) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Reproducibility / inference context
+# Seeding
 # --------------------------------------------------------------------------- #
+def _resolve_seed(request) -> int:
+    marker = request.node.get_closest_marker("torch_seed")
+    if marker and marker.args:
+        return int(marker.args[0])
+    config = request.config
+    seed = config.getoption("torch_seed")
+    if config.getoption("torch_seed_mode") == "per-test":
+        # Derive from the test id *without* the parametrization suffix, so every
+        # device (and every param) of one test sees identical inputs.
+        base_id = request.node.nodeid.split("[")[0]
+        seed = (seed + zlib.crc32(base_id.encode())) % (2**31)
+    return seed
+
+
 @pytest.fixture
 def torch_seed(request):
-    import torch
+    """Seed ``random``, ``numpy`` and ``torch``; yields the seed that was used.
 
-    seed = request.config.getoption("torch_seed")
-    random.seed(seed)
-    try:
-        import numpy as np
+    Priority: ``@pytest.mark.torch_seed(n)`` > ``--torch-seed-mode=per-test`` >
+    ``--torch-seed``. The seed is shown in the report of a failing test.
+    """
+    from .utils import deterministic_algorithms, seed_everything
 
-        np.random.seed(seed)
-    except ImportError:
-        pass
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
+    seed = _resolve_seed(request)
+    seed_everything(seed)
+    request.node.add_report_section("call", "torch-seed", f"torch seed: {seed}")
     if request.config.getoption("torch_deterministic"):
-        previous = torch.are_deterministic_algorithms_enabled()
-        torch.use_deterministic_algorithms(True)
-        yield seed
-        torch.use_deterministic_algorithms(previous)
+        with deterministic_algorithms(True):
+            yield seed
     else:
         yield seed
 
 
+@pytest.fixture(autouse=True)
+def _torch_autoseed(request):
+    if request.config.getoption("torch_autoseed"):
+        request.getfixturevalue("torch_seed")
+
+
+@pytest.fixture
+def torch_generator(torch_seed):
+    """A seeded **CPU** ``torch.Generator``.
+
+    It lives on the CPU on purpose: the same seed then yields identical values no
+    matter which device the test runs on, so cross-device comparisons are fair.
+    """
+    import torch
+
+    return torch.Generator().manual_seed(torch_seed)
+
+
+@pytest.fixture
+def make_tensor(torch_generator, torch_device):
+    """Factory for reproducible tensors, generated on the CPU and moved to ``torch_device``.
+
+    ``make_tensor(2, 3)``                          -> normal(0, 1), float32
+    ``make_tensor(2, 3, kind="uniform", low=0, high=1)``
+    ``make_tensor(4, 8, dtype=torch.long, low=1, high=50)``   -> integers in [1, 50)
+    """
+    import torch
+
+    def make(*shape, dtype=None, kind=None, low=None, high=None):
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list, torch.Size)):
+            shape = tuple(shape[0])
+        dtype = torch.float32 if dtype is None else dtype
+        is_int = not (dtype.is_floating_point or dtype.is_complex)
+        kind = kind or ("randint" if is_int else "normal")
+        if kind == "normal":
+            data = torch.randn(shape, generator=torch_generator, dtype=torch.float64)
+        elif kind == "uniform":
+            lo = -1.0 if low is None else float(low)
+            hi = 1.0 if high is None else float(high)
+            data = lo + (hi - lo) * torch.rand(
+                shape, generator=torch_generator, dtype=torch.float64
+            )
+        elif kind == "randint":
+            lo = 0 if low is None else int(low)
+            hi = (2 if dtype == torch.bool else 100) if high is None else int(high)
+            data = torch.randint(lo, hi, shape, generator=torch_generator)
+        else:
+            raise ValueError(f"unknown kind {kind!r}; use normal, uniform or randint")
+        return data.to(device=torch_device, dtype=dtype)
+
+    return make
+
+
+# --------------------------------------------------------------------------- #
+# Inference context
+# --------------------------------------------------------------------------- #
 @pytest.fixture
 def inference_mode():
     """Run the test body under ``torch.inference_mode()``."""
@@ -156,6 +234,18 @@ def inference_mode():
 
     with torch.inference_mode():
         yield
+
+
+# --------------------------------------------------------------------------- #
+# Model zoo (Hugging Face / timm / torchvision), cached per session
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="session")
+def model_loader():
+    """``ModelLoader`` with a per-session cache: ``model_loader.hf(...)``, ``.timm(...)``,
+    ``.torchvision(...)``. Cached models are shared between tests, so don't mutate them."""
+    from .integrations import ModelLoader
+
+    return ModelLoader()
 
 
 # --------------------------------------------------------------------------- #

@@ -1,8 +1,11 @@
 """Shared helpers: pytrees, batching, and model device/dtype inspection."""
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import itertools
+import os
+import random
 from collections.abc import Mapping
 from typing import Any, Callable
 
@@ -152,3 +155,40 @@ def concat_batch_outputs(outputs: list[Any]) -> dict[str, torch.Tensor]:
         ):
             result[path] = torch.cat(leaves, dim=0)
     return result
+
+
+# --------------------------------------------------------------------------- #
+# Seeding and inference context
+# --------------------------------------------------------------------------- #
+def seed_everything(seed: int) -> None:
+    """Seed ``random``, ``numpy`` (if installed) and ``torch`` (CPU and all CUDA devices)."""
+    random.seed(seed)
+    try:
+        import numpy as np
+
+        np.random.seed(seed % (2**32))
+    except ImportError:
+        pass
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+@contextlib.contextmanager
+def deterministic_algorithms(enabled: bool = True):
+    """Temporarily toggle ``torch.use_deterministic_algorithms``; restores the old value."""
+    previous = torch.are_deterministic_algorithms_enabled()
+    if enabled:
+        # Needed by some cuBLAS ops; only effective if set before CUDA initialises.
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.use_deterministic_algorithms(enabled)
+    try:
+        yield
+    finally:
+        torch.use_deterministic_algorithms(previous)
+
+
+def run_inference(model: Callable, inputs: Any) -> Any:
+    """``call_model`` under ``torch.inference_mode()``."""
+    with torch.inference_mode():
+        return call_model(model, inputs)
