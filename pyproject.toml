@@ -1,0 +1,114 @@
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[project]
+name = "pytest-torch"
+# Placeholder: the release workflow sets it from the git tag (v0.3.0 -> 0.3.0) before building.
+version = "0.0.0.dev0"
+description = "pytest plugin for testing PyTorch models: inference contracts, parity, invariance, training sanity"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "AKJ7" }]
+requires-python = ">=3.9"
+dependencies = ["pytest>=7.0", "tomli>=1.1; python_version < '3.11'"]
+keywords = ["pytest", "pytorch", "testing", "machine-learning", "deep-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/AKJ7/pytest-torch"
+Documentation = "https://akj7.github.io/pytest-torch/"
+Issues = "https://github.com/AKJ7/pytest-torch/issues"
+Changelog = "https://github.com/AKJ7/pytest-torch/releases"
+
+[project.optional-dependencies]
+torch = ["torch>=2.0"]
+hypothesis = ["hypothesis>=6"]
+# onnxscript: needed by recent torch versions whose default ONNX exporter is dynamo-based
+onnx = ["onnx", "onnxruntime", "onnxscript"]
+hf = ["transformers"]
+timm = ["timm"]
+torchvision = ["torchvision"]
+plots = ["matplotlib"]
+
+[project.entry-points.pytest11]
+pytest_torch = "pytest_torch.plugin"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.141.1",
+    "numpy>=2.0.2",
+    "pydantic>=2.13.5",
+    "ruff>=0.17.0",
+    "torch>=2.0",
+]
+
+docs = [
+    "mkdocs>=1.6,<2",  # mkdocs 2 drops the plugin system that material and mkdocstrings use
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: compiles C++ or trains for a while (deselect with -m 'not slow')"]
+
+# Optional: install CPU-only torch wheels in the dev environment (much smaller,
+# faster CI). Leave commented out if you want to test on a GPU locally.
+# [tool.uv.sources]
+# torch = [{ index = "pytorch-cpu" }]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cpu"
+# url = "https://download.pytorch.org/whl/cpu"
+# explicit = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors (PEP 8)
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes (syntax, undefined names)
+    "I",    # isort (clean import sorting)
+    "B",    # flake8-bugbear (catches design flaws & bugs)
+    "C4",   # flake8-comprehensions (better lists/dicts)
+    "UP",   # pyupgrade (upgrades old syntax to target-version)
+    "ARG",  # flake8-unused-arguments (finds dead code)
+    "PTH",  # flake8-use-pathlib (encourages modern Path objects)
+    "RUF",  # Ruff-specific rules (internal optimizations)
+]
+ignore = [
+    "E501", # Line-length violations (handled better by the formatter)
+]
+preview = false
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+docstring-code-format = true

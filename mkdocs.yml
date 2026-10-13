@@ -1,0 +1,80 @@
+site_name: pytest-torch
+site_description: pytest plugin for testing PyTorch models
+site_url: https://akj7.github.io/pytest-torch/
+repo_url: https://github.com/AKJ7/pytest-torch
+repo_name: AKJ7/pytest-torch
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/icon-dark.png      # light variant: the header is navy
+  favicon: assets/icon.png
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom             # brand colors: docs/stylesheets/extra.css
+      accent: custom
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle: { icon: material/weather-sunny, name: Light mode }
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: sphinx
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            filters: ["!^_"]
+            separate_signature: true
+            show_signature_annotations: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Check one prediction:
+      - Inference correctness: guides/inference.md
+      - Output specifications: guides/output-specs.md
+      - Devices, dtypes and unusual inputs: guides/matrix.md
+  - Check a model change:
+      - Deployment parity: guides/deployment.md
+      - Stateful and streaming models: guides/streaming.md
+  - Check a release:
+      - Dataset metrics: guides/dataset-metrics.md
+      - Checkpoints: guides/checkpoints.md
+      - Performance and determinism: guides/performance.md
+      - Failure reproduction: guides/repro.md
+  - Generated test suites: guides/model-suite.md
+  - More:
+      - Tolerances: guides/tolerances.md
+      - Training sanity: guides/training.md
+      - Recipes: guides/recipes.md
+  - Reference:
+      - Command line and markers: reference/cli.md
+      - Fixtures: reference/fixtures.md
+      - API: reference/api.md

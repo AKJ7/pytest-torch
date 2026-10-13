@@ -1,0 +1,66 @@
+name: Release
+
+# Publishing a GitHub release (tag "vX.Y.Z") builds the sdist and wheel and uploads them to PyPI.
+# The package version is taken from that tag, so there is nothing to bump by hand.
+#
+# One-time setup (no API token needed, PyPI trusted publishing):
+#   1. On PyPI: Account settings -> Publishing -> add a "pending publisher" for project
+#      "pytest-torch", this repository, workflow "release.yml", environment "pypi".
+#   2. On GitHub: Settings -> Environments -> create "pypi" (optionally require a reviewer).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tip: pin third-party actions to a commit SHA, or bump to the latest major.
+      - uses: astral-sh/setup-uv@v6
+
+      # uv_build only reads a static version: write the tag's version into pyproject.toml
+      # (in the runner only, nothing is committed). PEP 440 validation happens here.
+      - name: Set the version from the tag
+        shell: bash
+        run: uv version --frozen "${GITHUB_REF_NAME#v}"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check distribution metadata
+        run: uvx twine check --strict dist/*
+
+      - name: Smoke-test the wheel
+        shell: bash
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke dist/*.whl
+          # The version comes from the tag: make sure the wheel really carries it.
+          /tmp/smoke/bin/python -c "import pytest_torch, sys; v = pytest_torch.__version__; print(v); sys.exit(v != sys.argv[1])" "${GITHUB_REF_NAME#v}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pytest-torch
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
