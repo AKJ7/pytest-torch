@@ -18,7 +18,9 @@ pytest_torch = "pytest_torch.plugin"
 
 [dependency-groups]
 dev = [
-    "black>=25.11.0",
+    "numpy>=2.0.2",
+    "pydantic>=2.13.5",
+    "ruff>=0.17.0",
     "torch>=2.0",
 ]
 
@@ -48,3 +50,41 @@ exclude = '''
   | dist
 )
 '''
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors (PEP 8)
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes (syntax, undefined names)
+    "I",    # isort (clean import sorting)
+    "B",    # flake8-bugbear (catches design flaws & bugs)
+    "C4",   # flake8-comprehensions (better lists/dicts)
+    "UP",   # pyupgrade (upgrades old syntax to target-version)
+    "ARG",  # flake8-unused-arguments (finds dead code)
+    "PTH",  # flake8-use-pathlib (encourages modern Path objects)
+    "RUF",  # Ruff-specific rules (internal optimizations)
+]
+ignore = [
+    "E501", # Line-length violations (handled better by the formatter)
+]
+preview = false
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+docstring-code-format = true

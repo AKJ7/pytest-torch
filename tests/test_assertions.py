@@ -5,6 +5,7 @@ torch = pytest.importorskip("torch")
 from pytest_torch import assert_batch_invariant, assert_finite, assert_tensors_close
 
 
+
 def test_close_passes():
     a = torch.tensor([1.0, 2.0, 3.0])
     assert_tensors_close(a, a + 1e-8)

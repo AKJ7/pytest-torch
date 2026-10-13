@@ -54,3 +54,38 @@ def test_latency_budget_enforced(pytester):
         """
     )
     pytester.runpytest("--torch-device=cpu").assert_outcomes(failed=1)
+
+
+def test_golden_supports_nested_outputs(pytester):
+    pytester.makepyfile(
+        """
+        import pytest, torch
+
+        @pytest.mark.torch_golden("nested")
+        def test_nested(golden):
+            golden.check({"logits": torch.arange(4.0), "meta": {"n": 4, "tag": "x"}})
+        """
+    )
+    pytester.runpytest().assert_outcomes(failed=1)
+    pytester.runpytest("--torch-update-golden").assert_outcomes(passed=1)
+    pytester.runpytest().assert_outcomes(passed=1)
+
+
+
+def test_golden_mismatch_reports_path(pytester, monkeypatch):
+    pytester.makepyfile(
+        """
+        import os
+        import pytest, torch
+
+        @pytest.mark.torch_golden("nested")
+        def test_nested(golden):
+            shift = float(os.environ.get("GOLDEN_SHIFT", "0"))
+            golden.check({"logits": torch.arange(4.0) + shift})
+        """
+    )
+    pytester.runpytest("--torch-update-golden").assert_outcomes(passed=1)
+    monkeypatch.setenv("GOLDEN_SHIFT", "1.0")
+    result = pytester.runpytest()
+    result.assert_outcomes(failed=1)
+    assert "output['logits']" in result.stdout.str()
