@@ -11,9 +11,13 @@ optional ``hypothesis`` dependency.
 from __future__ import annotations
 
 import importlib
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING
 
-__version__ = "0.3.0"
+try:  # set at release time from the git tag (see .github/workflows/release.yml)
+    __version__ = version("pytest-torch")
+except PackageNotFoundError:  # running from a source tree that isn't installed
+    __version__ = "0+unknown"
 
 _EXPORTS = {
     # assertions
@@ -45,6 +49,18 @@ _EXPORTS = {
     "AgreementMetrics": "parity",
     "assert_matches_reference": "parity",
     "assert_generation_equal": "parity",
+    "assert_export_parity": "parity",
+    "assert_aoti_parity": "parity",
+    "assert_autocast_parity": "parity",
+    # training sanity
+    "assert_gradients_finite": "training",
+    "assert_all_params_receive_grad": "training",
+    "assert_gradcheck": "training",
+    "assert_loss_decreases": "training",
+    "assert_overfits_one_batch": "training",
+    "TrainingRun": "training",
+    # generated test suites
+    "ModelSuite": "suite",
     # performance
     "measure_latency": "perf",
     "measure_peak_memory": "perf",
@@ -71,6 +87,7 @@ _EXPORTS = {
     "ModelLoader": "integrations",
     "seed_everything": "utils",
     "deterministic_algorithms": "utils",
+    "is_compile_supported": "utils",
 }
 __all__ = list(_EXPORTS)
 
@@ -100,7 +117,19 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         AgreementMetrics,
         assert_matches_reference,
         assert_generation_equal,
+        assert_export_parity,
+        assert_aoti_parity,
+        assert_autocast_parity,
     )
+    from .training import (
+        assert_gradients_finite,
+        assert_all_params_receive_grad,
+        assert_gradcheck,
+        assert_loss_decreases,
+        assert_overfits_one_batch,
+        TrainingRun,
+    )
+    from .suite import ModelSuite
     from .perf import measure_latency, measure_peak_memory, check_perf, PerfStore, PerfResult
     from .compilation import assert_no_graph_breaks, assert_no_recompiles
     from .sync import forbid_host_sync, assert_no_host_sync
@@ -114,7 +143,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .report import save_mismatch_heatmap, github_annotation
     from .parallel import FileLock
     from .integrations import ModelLoader
-    from .utils import seed_everything, deterministic_algorithms
+    from .utils import seed_everything, deterministic_algorithms, is_compile_supported
 
 
 def __getattr__(name: str):

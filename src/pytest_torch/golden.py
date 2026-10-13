@@ -33,7 +33,8 @@ class Golden:
 
         if self.update:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save({"leaves": leaves, "torch_version": torch.__version__}, self.path)
+            # str(): TorchVersion is not an allowed global for torch.load(weights_only=True)
+            torch.save({"leaves": leaves, "torch_version": str(torch.__version__)}, self.path)
             return
 
         if not self.path.exists():

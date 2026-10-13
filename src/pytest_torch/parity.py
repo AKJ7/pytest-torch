@@ -11,7 +11,7 @@ from typing import Any, Callable
 import torch
 
 from .assertions import assert_outputs_close, format_problems, leaves_diff
-from .utils import flatten, model_device, run_inference, to_device, tree_map
+from .utils import find_batch_size, flatten, model_device, run_inference, to_device, tree_map
 
 
 def _to_cpu(obj: Any) -> Any:
@@ -163,6 +163,206 @@ def assert_onnx_parity(
         raise AssertionError(
             format_problems("ONNX Runtime output differs from PyTorch:", problems)
         )
+
+
+def _args_kwargs(inputs: Any) -> tuple[tuple, dict]:
+    if isinstance(inputs, Mapping):
+        return (), dict(inputs)
+    if isinstance(inputs, (list, tuple)):
+        return tuple(inputs), {}
+    return (inputs,), {}
+
+
+def _batch_dynamic_shapes(args: tuple, kwargs: dict) -> Any:
+    """``dynamic_shapes`` marking dim 0 of every batch-aligned input tensor as dynamic."""
+    batch = find_batch_size((args, kwargs))
+    if batch is None:
+        raise ValueError("dynamic_batch=True needs at least one tensor input with a batch dim")
+    if batch < 2:
+        raise ValueError(
+            "dynamic_batch=True needs example inputs with batch size >= 2: "
+            "torch.export specializes sizes 0 and 1"
+        )
+    dim = torch.export.Dim("batch")
+
+    def spec(obj: Any) -> Any:
+        if isinstance(obj, torch.Tensor):
+            return {0: dim} if obj.dim() >= 1 and obj.shape[0] == batch else None
+        if isinstance(obj, Mapping):
+            return {k: spec(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return type(obj)(spec(v) for v in obj) if not hasattr(obj, "_fields") else None
+        return None
+
+    # torch.export wants kwargs' specs keyed by name, positional ones as a tuple.
+    if args and kwargs:
+        raise ValueError("dynamic_batch=True needs inputs that are all positional or all keyword")
+    return spec(kwargs) if kwargs else spec(args)
+
+
+def _export(model, inputs: Any, *, dynamic_shapes, dynamic_batch: bool, strict: bool | None):
+    if dynamic_batch and dynamic_shapes is not None:
+        raise ValueError("pass either dynamic_batch=True or dynamic_shapes, not both")
+    args, kwargs = _args_kwargs(inputs)
+    if dynamic_batch:
+        dynamic_shapes = _batch_dynamic_shapes(args, kwargs)
+    options: dict[str, Any] = {"dynamic_shapes": dynamic_shapes}
+    if strict is not None:
+        import inspect
+
+        if "strict" in inspect.signature(torch.export.export).parameters:
+            options["strict"] = strict
+        elif not strict:  # older torch always exports strictly
+            raise ValueError("strict=False needs a newer torch (torch.export has no 'strict' option)")
+    try:
+        with torch.no_grad():
+            return torch.export.export(model, args, kwargs or None, **options)
+    except Exception as exc:
+        first_lines = "\n  ".join(str(exc).strip().splitlines()[:8])
+        raise AssertionError(
+            f"torch.export failed ({type(exc).__name__}):\n  {first_lines}\n"
+            "Hint: data-dependent control flow (`if tensor:`), .item() and unsupported "
+            "Python features block export; see torch.export's error above for the line."
+        ) from exc
+
+
+def _compare_runs(runner, model, inputs: Any, more_inputs: tuple, what: str, *, rtol, atol) -> None:
+    device = model_device(model)
+    for i, batch in enumerate((inputs, *more_inputs)):
+        batch = to_device(batch, device)
+        label = "example inputs" if i == 0 else f"more_inputs[{i - 1}]"
+        reference = run_inference(model, batch)
+        try:
+            out = run_inference(runner, batch)
+        except Exception as exc:
+            if i == 0:
+                raise
+            raise AssertionError(
+                f"{what} rejected {label} ({type(exc).__name__}: {str(exc).strip().splitlines()[0]}).\n"
+                "Hint: shapes are fixed at export time; pass dynamic_batch=True or dynamic_shapes=..."
+            ) from exc
+        _assert_close(out, reference, f"{what} output differs from eager on {label}:", rtol=rtol, atol=atol)
+
+
+def assert_export_parity(
+    model,
+    inputs: Any,
+    *more_inputs: Any,
+    dynamic_batch: bool = False,
+    dynamic_shapes: Any = None,
+    strict: bool | None = None,
+    rtol: float = 1e-5,
+    atol: float = 1e-5,
+):
+    """Export with ``torch.export`` and assert the exported program matches eager.
+
+    ``more_inputs`` are extra input sets (e.g. another batch size) that the *same*
+    exported program must accept and match on; that needs dynamic shapes:
+    ``dynamic_batch=True`` marks dim 0 of every batch-aligned input as dynamic, or pass
+    ``torch.export``'s own ``dynamic_shapes``. ``strict`` is forwarded when set.
+    Returns the ``ExportedProgram`` (e.g. to save it or lower it further).
+    """
+    inputs = to_device(inputs, model_device(model))
+    program = _export(model, inputs, dynamic_shapes=dynamic_shapes, dynamic_batch=dynamic_batch, strict=strict)
+    _compare_runs(_exported_module(program), model, inputs, more_inputs, "torch.export", rtol=rtol, atol=atol)
+    return program
+
+
+def _exported_module(program) -> Callable:
+    """``program.module()``; on old torch (< 2.3) it takes keyword inputs only positionally."""
+    module = program.module()
+
+    def run(*args, **kwargs):
+        try:
+            return module(*args, **kwargs)
+        except TypeError as exc:
+            if not kwargs or "keyword argument" not in str(exc):
+                raise
+            return module(*args, *kwargs.values())  # flattened in the order they were exported
+
+    return run
+
+
+def _cxx_compiler() -> str | None:
+    import shutil
+
+    candidates = [os.environ.get("CXX", ""), "g++", "clang++", "c++", "cl"]
+    return next((c for c in candidates if c and shutil.which(c)), None)
+
+
+def assert_aoti_parity(
+    model,
+    inputs: Any,
+    *more_inputs: Any,
+    dynamic_batch: bool = False,
+    dynamic_shapes: Any = None,
+    rtol: float = 1e-4,
+    atol: float = 1e-4,
+    inductor_configs: Mapping[str, Any] | None = None,
+) -> None:
+    """Export, compile ahead-of-time with AOTInductor, load the package and compare to eager.
+
+    This is the path to running a model without Python (C++ servers, edge). Needs
+    torch >= 2.6 and a C++ compiler; skips the test otherwise. Compilation takes a
+    while (tens of seconds), so keep these tests few. Arguments as in
+    :func:`assert_export_parity`.
+    """
+    import pytest
+
+    inductor = getattr(torch, "_inductor", None)
+    if inductor is None or not hasattr(inductor, "aoti_compile_and_package"):
+        pytest.skip("AOTInductor packaging needs torch >= 2.6")
+    if _cxx_compiler() is None:
+        pytest.skip("AOTInductor needs a C++ compiler (set CXX or install g++/clang++)")
+
+    inputs = to_device(inputs, model_device(model))
+    program = _export(model, inputs, dynamic_shapes=dynamic_shapes, dynamic_batch=dynamic_batch, strict=None)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = inductor.aoti_compile_and_package(
+            program,
+            package_path=os.path.join(tmp, "model.pt2"),
+            inductor_configs=dict(inductor_configs or {}),
+        )
+        runner = inductor.aoti_load_package(path)
+        _compare_runs(runner, model, inputs, more_inputs, "AOTInductor", rtol=rtol, atol=atol)
+
+
+def assert_autocast_parity(
+    model,
+    inputs: Any,
+    *,
+    dtype: torch.dtype = torch.bfloat16,
+    rtol: float = 2e-2,
+    atol: float = 2e-2,
+) -> None:
+    """Assert the model under ``torch.autocast(dtype)`` stays close to full precision.
+
+    This is how mixed precision usually runs (weights stay fp32, matmuls and convs run
+    in ``dtype``), unlike casting the whole model as the contract's ``dtype_parity``
+    check does. Outputs are compared in fp32. Skips if autocast isn't available for
+    the model's device.
+    """
+    import pytest
+
+    device = model_device(model)
+    available = getattr(torch.amp, "is_autocast_available", None)
+    if available is not None and not available(device.type):
+        pytest.skip(f"autocast is not available on {device.type}")
+    inputs = to_device(inputs, device)
+    reference = run_inference(model, inputs)
+    with torch.autocast(device_type=device.type, dtype=dtype):
+        out = run_inference(model, inputs)
+
+    def as_f32(obj: Any) -> Any:
+        return tree_map(lambda t: t.float() if t.is_floating_point() else t, obj)
+
+    _assert_close(
+        as_f32(out),
+        as_f32(reference),
+        f"autocast({device.type}, {dtype}) output differs from full precision:",
+        rtol=rtol,
+        atol=atol,
+    )
 
 
 # --------------------------------------------------------------------------- #

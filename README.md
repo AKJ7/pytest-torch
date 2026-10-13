@@ -1,18 +1,32 @@
 # pytest-torch
 
-**Test PyTorch inference like you mean it.** `pytest-torch` is a pytest plugin that turns the
+**Test PyTorch models like you mean it.** `pytest-torch` is a pytest plugin that turns the
 tedious, easy-to-get-wrong parts of model testing into one-liners: device parametrization,
 reproducible inputs, tolerance-aware comparisons, invariance checks, deployment parity,
-performance baselines and readable failures.
+training sanity checks, performance baselines and readable failures.
 
 > **Status: alpha.** The API may still change. Requires Python 3.9+, pytest 7+ and PyTorch 2.0+.
+> **Documentation:** <https://akj7.github.io/pytest-torch/>
 
 ```python
-from pytest_torch import check_inference_contract
+from pytest_torch import ModelSuite
 
-def test_model(model, make_tensor):
-    check_inference_contract(model, make_tensor(8, 16))
+class TestClassifier(ModelSuite):           # a whole test suite from one class
+    checks = ("contract", "compile", "export", "training")
+
+    def make_model(self):
+        return Classifier()
+
+    def make_inputs(self, make_tensor):
+        return make_tensor(8, 16)
+
+    def loss(self, output, inputs):
+        return output.logsumexp(-1).mean()
 ```
+
+That class is a test suite: eval mode, finite outputs, determinism, batch invariance,
+cross-device parity, `torch.compile` and `torch.export` parity, finite gradients, every
+parameter learning, and the model overfitting one batch, on every available device.
 
 ## A bug it catches
 
@@ -40,16 +54,35 @@ where it is worst, and how bad it is, for any nested output structure.
 
 | You want to catch... | Use |
 |---|---|
+| All of the below for one model, without writing the tests | [`ModelSuite`](#generated-test-suites) |
 | Model left in train mode, NaN/Inf, nondeterminism, batch-dependent output, mutated buffers | [`check_inference_contract`](#inference-contract) |
 | CPU and GPU (or fp32 and bf16, or your port and the original) disagree: *where?* | [`localize_divergence`](#find-the-first-diverging-layer) |
 | Padding or masked tokens leak into real tokens; a "set" model depends on order | [`assert_padding_invariant`, `assert_mask_invariant`, `assert_permutation_invariant`](#invariance-and-metamorphic-tests) |
-| `torch.compile` / TorchScript / ONNX output differs from eager | [`assert_compile_parity`, `assert_torchscript_parity`, `assert_onnx_parity`](#parity-with-deployment-targets-and-references) |
+| `torch.compile` / `torch.export` / AOTInductor / TorchScript / ONNX output differs from eager | [`assert_compile_parity`, `assert_export_parity`, `assert_aoti_parity`, ...](#parity-with-deployment-targets-and-references) |
+| Mixed precision (`torch.autocast`) drifts too far from fp32 | [`assert_autocast_parity`](#parity-with-deployment-targets-and-references) |
+| Dead layers, NaN gradients, a wrong custom backward, a model that cannot learn | [`assert_all_params_receive_grad`, `assert_gradcheck`, `assert_overfits_one_batch`, ...](#training-sanity) |
 | A quantized or distilled model is too inaccurate | [`assert_models_agree`](#parity-with-deployment-targets-and-references) |
 | Your reimplementation differs from the reference; greedy decoding diverges | [`assert_matches_reference`, `assert_generation_equal`](#parity-with-deployment-targets-and-references) |
 | Flaky GPU outputs | [`diagnose_nondeterminism`](#nondeterminism) |
 | Latency or memory regressions | [`perf_baseline`](#performance-regressions) |
 | Graph breaks, recompilations, hidden host-device syncs | [`assert_no_graph_breaks`, `assert_no_recompiles`, `assert_no_host_sync`](#torchcompile-health-and-host-device-syncs) |
 | Inputs you didn't think of (zeros, extremes, odd shapes) | [Hypothesis strategies](#hypothesis-strategies) |
+
+## Examples
+
+Runnable, self-contained test files in [`examples/`](examples/) (`pytest examples/ -v`). Most
+have a "Try ..." comment showing a one-line bug that makes the test fail.
+
+| File | Shows |
+|---|---|
+| [`test_model_suite.py`](examples/test_model_suite.py) | `ModelSuite`: contract, compile, export with dynamic batch, autocast and training checks from one class |
+| [`test_tiny_classifier.py`](examples/test_tiny_classifier.py) | Inference contract, golden files, latency budget, CPU vs GPU layer diff |
+| [`test_metamorphic.py`](examples/test_metamorphic.py) | Point-cloud order invariance, token-tag equivariance, flip/rotation invariance, scaling relations |
+| [`test_deployment.py`](examples/test_deployment.py) | `torch.compile`, `torch.export`, AOTInductor, TorchScript and ONNX parity; a pruned model's accuracy budget; bf16 and autocast |
+| [`test_training_sanity.py`](examples/test_training_sanity.py) | A two-tower model: finite gradients, every parameter learns, loss decreases, one batch overfits; gradcheck of a custom backward |
+| [`test_reimplementation.py`](examples/test_reimplementation.py) | Hand-written attention vs `nn.MultiheadAttention`, BatchNorm folding, a renamed refactor checked layer by layer, incremental vs full greedy decoding |
+| [`test_property_based.py`](examples/test_property_based.py) | Hypothesis edge cases: softmax overflow, zero-variance normalization, NaN inputs |
+| [`test_nondeterminism.py`](examples/test_nondeterminism.py) | Bit-exact eval, a forgotten `.eval()` caught by the contract, MC dropout diagnosed as RNG-driven |
 
 ## Installation
 
@@ -95,6 +128,32 @@ pytest --torch-device=cpu        # pin it
 
 Model inputs can be a tensor, a tuple of positional arguments, or a dict of keyword arguments;
 outputs can be any nested structure of dicts, tuples, dataclasses or Hugging Face `ModelOutput`s.
+
+## Generated test suites
+
+Subclass `ModelSuite`, describe the model and its inputs, and pick the checks. Each check
+becomes a test, on every device:
+
+| Check | Generated tests |
+|---|---|
+| `contract` *(default)* | `test_inference_contract` |
+| `compile` *(default)*, `export` *(default)*, `torchscript`, `onnx`, `aoti`, `autocast` | `test_<name>_parity` |
+| `golden` | `test_golden` (file `__golden__/<ClassName>.pt`) |
+| `training` (needs `loss()`) | `test_gradients_finite`, `test_all_params_receive_grad`, `test_loss_decreases`, `test_overfits_one_batch` |
+
+```python
+class TestTextClassifier(ModelSuite):
+    checks = ("contract", "export", "autocast", "training")
+    dynamic_batch = True                                   # exported program must accept other batch sizes
+    check_options = {                                      # kwargs for the assertion behind a test
+        "inference_contract": {"dtypes": (torch.bfloat16,)},
+        "overfits_one_batch": {"steps": 300},
+    }
+    ...
+```
+
+Checks you don't list don't exist (no wall of skips); generated tests are ordinary methods
+you can override or add to. Configuration mistakes fail at collection with a clear message.
 
 ## Fixtures
 
@@ -240,7 +299,10 @@ from pytest_torch import (
 )
 
 assert_compile_parity(model, x, backend="eager")        # torch.compile vs eager, run twice
-assert_torchscript_parity(model, x, mode="trace")       # or mode="script"
+assert_export_parity(model, x, x_other_batch, dynamic_batch=True)  # torch.export, one program for all inputs
+assert_aoti_parity(model, x)                            # AOTInductor .pt2 package (torch 2.6+, needs a C++ compiler)
+assert_autocast_parity(model, x, dtype=torch.bfloat16)  # mixed precision vs fp32
+assert_torchscript_parity(model, x, mode="trace")       # or mode="script" (TorchScript is deprecated upstream)
 assert_onnx_parity(model, x)                            # export, run in ONNX Runtime, compare
 
 # fp32 vs quantized / pruned / distilled, with an accuracy budget:
@@ -255,7 +317,32 @@ assert_generation_equal(my_gpt, hf_gpt, input_ids, max_new_tokens=16, pad_token_
 
 `assert_models_agree` returns the measured metrics (max/mean abs error, cosine similarity,
 top-1 agreement) so you can log them. `assert_generation_equal` reports the first diverging
-token per row.
+token per row. If `torch.export` fails, the assertion carries torch's reason and a hint.
+
+## Training sanity
+
+Every helper takes `(model, inputs, loss_fn)` with `loss_fn(output) -> scalar`; helpers that
+take optimizer steps train a deep copy, so your model is never modified.
+
+```python
+from pytest_torch import (
+    assert_gradients_finite, assert_all_params_receive_grad,
+    assert_loss_decreases, assert_overfits_one_batch, assert_gradcheck,
+)
+
+loss_fn = lambda out: F.cross_entropy(out, labels)
+assert_gradients_finite(model, x, loss_fn)            # NaN/Inf in loss or any gradient, per parameter
+assert_all_params_receive_grad(model, x, loss_fn)     # unused layers, .detach() in forward, ignored heads
+assert_loss_decreases(model, x, loss_fn, steps=20)    # the training loop is wired up
+assert_overfits_one_batch(model, x, loss_fn)          # the model can memorize one batch
+assert_gradcheck(MyFunction.apply, small_x)           # custom backward vs finite differences
+```
+
+```
+AssertionError: 4 trainable parameter(s) receive no useful gradient:
+  doc.0.weight: no gradient (not connected to the loss)
+  ...
+```
 
 ## Hypothesis strategies
 
@@ -370,6 +457,9 @@ pytest --torch-github-annotations --torch-failure-artifacts=failure-artifacts
 
 `torch_seed(n)`, `torch_golden(name)`, `torch_max_latency(ms=...)`, `torch_gpu_exclusive(timeout=...)`.
 
+Skip compile/export tests on platforms without dynamo with
+`pytest.mark.skipif(not is_compile_supported(), ...)`; `ModelSuite` does it for you.
+
 ## Good to know
 
 - **TorchScript and ONNX** accept only positional tensor inputs; `trace` records the control
@@ -387,12 +477,16 @@ pytest --torch-github-annotations --torch-failure-artifacts=failure-artifacts
 uv sync                          # environment, lockfile, dev dependencies
 uv run pytest                    # the plugin's own tests
 uv run pytest examples/ -v       # runnable examples of every feature
+uv run pytest -m "not slow"      # skip AOTInductor compilation and other slow tests
+uv run --group docs mkdocs serve # documentation at http://127.0.0.1:8000
 uv build                         # sdist and wheel
 ```
 
-CI (`.github/workflows/ci.yml`) runs a matrix over operating systems, Python versions and torch
-versions with CPU-only wheels, and uses the plugin's own annotations and failure artifacts.
+CI (`.github/workflows/ci.yml`) runs the tests and the examples over operating systems, Python
+versions and torch versions with CPU-only wheels, plus the slow tests once on the newest torch,
+and uses the plugin's own annotations and failure artifacts. `docs.yml` builds the docs on
+every PR and publishes them from `main`; `release.yml` publishes to PyPI from a GitHub release.
 
 ## License
 
-To be added before the first release.
+[MIT](LICENSE)

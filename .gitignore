@@ -221,3 +221,5 @@ __marimo__/
 
 # Project specifics
 __golden__/
+# ...except the examples' reference outputs, which CI compares against
+!examples/__golden__/

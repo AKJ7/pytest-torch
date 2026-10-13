@@ -46,7 +46,15 @@ jobs:
 
       # Dogfooding: annotations on failing tests + mismatch heatmaps as artifacts.
       - name: Run tests
-        run: uv run --no-sync pytest -ra --torch-github-annotations --torch-failure-artifacts=failure-artifacts
+        run: uv run --no-sync pytest tests -ra -m "not slow" --torch-github-annotations --torch-failure-artifacts=failure-artifacts
+
+      - name: Run examples
+        run: uv run --no-sync pytest examples -ra -m "not slow" --torch-github-annotations --torch-failure-artifacts=failure-artifacts
+
+      # AOTInductor compiles C++: once, on the newest torch, where g++ is available.
+      - name: Run slow tests
+        if: matrix.os == 'ubuntu-latest' && matrix.torch_spec == 'torch'
+        run: uv run --no-sync pytest tests examples -ra -m slow --torch-github-annotations
 
       - name: Upload failure artifacts
         if: failure()

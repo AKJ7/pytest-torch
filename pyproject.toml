@@ -4,12 +4,34 @@ build-backend = "uv_build"
 
 [project]
 name = "pytest-torch"
-version = "0.1.0"
-description = "pytest plugin that eases inference testing of PyTorch models"
+# Placeholder: the release workflow sets it from the git tag (v0.3.0 -> 0.3.0) before building.
+version = "0.0.0.dev0"
+description = "pytest plugin for testing PyTorch models: inference contracts, parity, invariance, training sanity"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "AKJ7" }]
 requires-python = ">=3.9"
 dependencies = ["pytest>=7.0"]
-classifiers = ["Framework :: Pytest", "Typing :: Typed"]
+keywords = ["pytest", "pytorch", "testing", "machine-learning", "deep-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/AKJ7/pytest-torch"
+Documentation = "https://akj7.github.io/pytest-torch/"
+Issues = "https://github.com/AKJ7/pytest-torch/issues"
+Changelog = "https://github.com/AKJ7/pytest-torch/releases"
 
 [project.optional-dependencies]
 torch = ["torch>=2.0"]
@@ -33,8 +55,15 @@ dev = [
     "torch>=2.0",
 ]
 
+docs = [
+    "mkdocs>=1.6,<2",  # mkdocs 2 drops the plugin system that material and mkdocstrings use
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: compiles C++ or trains for a while (deselect with -m 'not slow')"]
 
 # Optional: install CPU-only torch wheels in the dev environment (much smaller,
 # faster CI). Leave commented out if you want to test on a GPU locally.

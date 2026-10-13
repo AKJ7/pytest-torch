@@ -192,3 +192,20 @@ def run_inference(model: Callable, inputs: Any) -> Any:
     """``call_model`` under ``torch.inference_mode()``."""
     with torch.inference_mode():
         return call_model(model, inputs)
+
+
+def is_compile_supported() -> bool:
+    """Whether ``torch.compile`` (dynamo) works on this platform and Python version.
+
+    Use it to skip compile/export tests: ``@pytest.mark.skipif(not is_compile_supported(), ...)``.
+    """
+    if not hasattr(torch, "compile"):
+        return False
+    try:
+        import importlib
+
+        dynamo = importlib.import_module("torch._dynamo")
+    except Exception:  # dynamo itself fails to import on unsupported platforms
+        return False
+    check = getattr(dynamo, "is_dynamo_supported", None)
+    return bool(check()) if check is not None else True
