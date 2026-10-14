@@ -11,8 +11,9 @@ hooks, and later layers inherit earlier errors, so always start at the first row
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 import torch
 
@@ -114,7 +115,7 @@ def _collect(model, inputs, leaf_only: bool):
     pending: dict[str, list] = defaultdict(list)  # inputs captured before forward, per call
 
     def make_pre_hook(name: str):
-        def pre_hook(module, args):
+        def pre_hook(_module, args):  # forward-pre-hook signature
             pending[name].append(_tensors(args, "in"))  # before an in-place module mutates them
 
         return pre_hook

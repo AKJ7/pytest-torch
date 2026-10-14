@@ -2,7 +2,6 @@ import pytest
 
 torch = pytest.importorskip("torch")
 from torch import nn
-from torch.nn import functional as F
 
 from pytest_torch import StreamingEquivalence, assert_streaming_equivalent
 
@@ -249,7 +248,7 @@ def test_custom_combine(sequence):
 # --------------------------------------------------------------------------- #
 def test_usage_errors(sequence):
     model = CausalConvStream()
-    with pytest.raises(ValueError, match="reset= .* or init_state="):
+    with pytest.raises(ValueError, match=r"reset= .* or init_state="):
         assert_streaming_equivalent(model.forward, model.forward_chunk, sequence)
     with pytest.raises(ValueError, match="positive"):
         assert_streaming_equivalent(model.forward, model.forward_chunk, sequence, chunk_sizes=[0], reset=model.reset_cache)

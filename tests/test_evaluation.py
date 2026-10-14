@@ -194,9 +194,9 @@ def test_baseline_file_records_provenance(pytester):
 # --------------------------------------------------------------------------- #
 # Paired comparisons with confidence intervals
 # --------------------------------------------------------------------------- #
-from pytest_torch import paired_difference  # noqa: E402
-from pytest_torch.evaluation import Evaluation, check_metrics  # noqa: E402
-from pytest_torch.perf import PerfStore  # noqa: E402
+from pytest_torch import paired_difference
+from pytest_torch.evaluation import Evaluation, check_metrics
+from pytest_torch.perf import PerfStore
 
 
 def correctness(n, wrong):

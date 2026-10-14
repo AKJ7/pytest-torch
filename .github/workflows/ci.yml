@@ -16,7 +16,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # oldest supported combination (torch < 2.3 needs numpy < 2)
+          # the advertised minimums: Python 3.9, torch 2.0, pytest 7.0 (torch < 2.3 needs numpy < 2)
+          - { os: ubuntu-latest, python: "3.9", torch_spec: "torch==2.0.*", extra_pins: '"numpy<2"', pytest_spec: "pytest==7.0.*" }
           - { os: ubuntu-latest, python: "3.9", torch_spec: "torch==2.2.*", extra_pins: '"numpy<2"' }
           - { os: ubuntu-latest, python: "3.10", torch_spec: "torch==2.4.*" }
           - { os: ubuntu-latest, python: "3.12", torch_spec: "torch==2.6.*" }
@@ -45,7 +46,7 @@ jobs:
           --index-strategy unsafe-best-match
 
       - name: Install the project and test dependencies
-        run: uv pip install -e . pytest pytest-xdist hypothesis matplotlib
+        run: uv pip install -e . "${{ matrix.pytest_spec || 'pytest' }}" pytest-xdist hypothesis matplotlib pyyaml
 
       # Dogfooding: annotations on failing tests + mismatch heatmaps as artifacts.
       - name: Run tests
@@ -66,6 +67,25 @@ jobs:
           name: failure-artifacts-${{ matrix.os }}-py${{ matrix.python }}
           path: failure-artifacts
           if-no-files-found: ignore
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff@0.17 check src tests examples
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv
+      - run: uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: uv pip install -e . mypy pytest hypothesis numpy
+      - run: uv run --no-sync mypy  # settings in [tool.mypy]
 
   build:
     runs-on: ubuntu-latest

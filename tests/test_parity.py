@@ -54,7 +54,7 @@ def test_compile_parity_passes_with_eager_backend():
 
 @pytest.mark.skipif(compile_unsupported, reason="torch.compile (dynamo) not supported here")
 def test_compile_parity_detects_differences():
-    with pytest.raises(AssertionError, match="torch.compile"):
+    with pytest.raises(AssertionError, match=r"torch\.compile"):
         assert_compile_parity(Noisy(), torch.randn(4, 3), backend="eager")
 
 

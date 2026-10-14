@@ -5,16 +5,36 @@
   </picture>
 </h1>
 
+<div align="center">
+
+[![PyPI](https://img.shields.io/badge/-PyPI-blue.svg?logo=pypi&labelColor=555555&style=for-the-badge)](https://pypi.org/project/pytest-torch/)
+[![Download count](https://img.shields.io/pypi/dm/pytest-torch?color=brightgreen&style=for-the-badge)](https://pypistats.org/packages/pytest-torch)
+[![PyPI license](https://img.shields.io/pypi/l/pytest-torch?color=brightgreen&style=for-the-badge)](https://github.com/AKJ7/pytest-torch/blob/main/LICENSE)
+[![Latest version](https://img.shields.io/github/v/tag/AKJ7/pytest-torch?color=brightgreen&style=for-the-badge)](https://github.com/AKJ7/pytest-torch/releases)
+
+</div>
+
 **Test PyTorch models like you mean it.** `pytest-torch` is a pytest plugin with small,
 composable helpers for the tests every model needs, and failure messages that say where a
 mismatch is and how large it is.
 
-> **Status: alpha.** The API may still change. Requires Python 3.9+, pytest 7+ and PyTorch 2.0+.
+> **Stable** (1.x, [semantic versioning](https://github.com/AKJ7/pytest-torch/blob/main/CHANGELOG.md#stability)). Requires Python 3.9+, pytest 7+ and PyTorch 2.0+.
 > **Documentation:** <https://akj7.github.io/pytest-torch/>
 
 ```bash
 pip install pytest-torch
 ```
+
+Try it on any model first, with no test file:
+
+```bash
+pytest --torch-model=hf:google-bert/bert-base-uncased     # or timm:NAME, torchvision:NAME, mypackage.models:Net
+```
+
+It builds the model (random weights; only the config is downloaded), infers inputs, and runs
+the inference contract, padding and mask invariance, a checkpoint round-trip and finite
+gradients on every available device. See
+[test any model with no code](https://akj7.github.io/pytest-torch/guides/zero-code/).
 
 ## Start here
 
@@ -120,17 +140,69 @@ class TestClassifier(ModelSuite):
 See [generated test suites](https://akj7.github.io/pytest-torch/guides/model-suite/) for
 every check and option. The helpers it uses stay available on their own.
 
-## Everything else
+## Features
 
-| Topic | Guide |
+Every feature, grouped by the question it answers. Each group links to its guide.
+
+**Check one prediction** · [inference](https://akj7.github.io/pytest-torch/guides/inference/), [output specs](https://akj7.github.io/pytest-torch/guides/output-specs/), [devices and inputs](https://akj7.github.io/pytest-torch/guides/matrix/)
+
+| Feature | API |
 |---|---|
-| Fixtures: devices, seeds, reproducible tensors, golden files | [Fixtures](https://akj7.github.io/pytest-torch/reference/fixtures/) |
-| Project-wide tolerances in `pyproject.toml` | [Tolerances](https://akj7.github.io/pytest-torch/guides/tolerances/) |
-| Gradients, learning, overfitting one batch, gradcheck | [Training sanity](https://akj7.github.io/pytest-torch/guides/training/) |
-| Latency, memory, graph breaks, host syncs, nondeterminism, xdist | [Performance and determinism](https://akj7.github.io/pytest-torch/guides/performance/) |
-| Hypothesis strategies for edge-case inputs | [Devices, dtypes and unusual inputs](https://akj7.github.io/pytest-torch/guides/matrix/) |
-| Hugging Face, timm and torchvision models | [Recipes](https://akj7.github.io/pytest-torch/guides/recipes/) |
-| Command-line options and markers | [Reference](https://akj7.github.io/pytest-torch/reference/cli/) |
+| One-call inference contract: eval mode, finite outputs, determinism, batch invariance, device and dtype parity, no state mutation, with a hint per failure | `check_inference_contract` → `ContractReport` of `CheckResult`s |
+| Tensor and nested-output comparisons with dtype-aware tolerances, exact integers, complex support, `equal_nan`, structure checks and per-path messages | `assert_tensors_close`, `assert_outputs_close`, `assert_finite`, `assert_batch_invariant` |
+| Output specifications: shapes with symbolic dims, dtypes, finiteness, ranges, probabilities and log-probabilities | `assert_output_spec`, `TensorSpec`, `Probabilities` |
+| Padding, mask and permutation invariance, custom metamorphic relations | `assert_padding_invariant`, `assert_mask_invariant`, `assert_permutation_invariant`, `assert_permutation_equivariant`, `assert_invariant`, `assert_equivariant` |
+| Memory-layout invariance: non-contiguous and channels_last inputs | `assert_layout_invariant` |
+| Every test on every device (CPU, CUDA, Intel XPU, Apple MPS) and, on request, every dtype | `torch_device`, `torch_dtype` fixtures, `--torch-device`, `--torch-dtype`, `@pytest.mark.torch_dtypes`, `available_devices` |
+| Reproducible inputs, identical on every device | `make_tensor`, `torch_generator` fixtures |
+| Hypothesis strategies: edge-case tensors, any memory layout, ragged padded batches | `pytest_torch.strategies`: `tensors`, `shapes`, `padded_batches` |
+
+**Check a model change** · [deployment parity](https://akj7.github.io/pytest-torch/guides/deployment/), [streaming](https://akj7.github.io/pytest-torch/guides/streaming/)
+
+| Feature | API |
+|---|---|
+| Compare with a reference implementation or saved outputs | `assert_matches_reference` |
+| Find the first layer where two models diverge, and whether the error starts inside it | `localize_divergence` → `DivergenceReport` of `LayerDiff`s |
+| Accuracy budgets for quantized, pruned, distilled or low-precision models | `assert_models_agree`, `compare_outputs` → `AgreementMetrics` |
+| Greedy decoding gives the same tokens, first difference per row | `assert_generation_equal` |
+| Deployment parity: `torch.compile`, `torch.export` (dynamic batch), AOTInductor, TorchScript, ONNX Runtime, autocast | `assert_compile_parity`, `assert_export_parity`, `assert_aoti_parity`, `assert_torchscript_parity`, `assert_onnx_parity`, `assert_autocast_parity` |
+| `torch.compile` health: one graph, no recompiles | `assert_no_graph_breaks`, `assert_no_recompiles`, `is_compile_supported` |
+| Stateful and streaming models: chunked vs full, resets, request isolation, user-defined equivalence | `assert_streaming_equivalent`, `StreamingEquivalence` → `StreamingReport` |
+
+**Check a release** · [dataset metrics](https://akj7.github.io/pytest-torch/guides/dataset-metrics/), [checkpoints](https://akj7.github.io/pytest-torch/guides/checkpoints/), [performance](https://akj7.github.io/pytest-torch/guides/performance/), [failure reproduction](https://akj7.github.io/pytest-torch/guides/repro/)
+
+| Feature | API |
+|---|---|
+| Dataset metrics against recorded baselines that remember what they measured (context, data fingerprint, samples, metric config, checkpoint) | `metric_baseline` fixture → `MetricResult`; `--torch-update-metrics`, `--torch-metrics-strict`, `--torch-metrics-file` |
+| Paired comparisons with bootstrap confidence intervals: noise on a small set isn't a regression | `paired_difference`, `evaluate`, `evaluate_detailed` |
+| Checkpoints: save/reload preserves predictions; old checkpoints still load into new code | `assert_checkpoint_roundtrip`, `assert_checkpoint_loads` |
+| Latency budgets and per-machine performance baselines, with peak memory on CUDA and XPU | `latency`, `perf_baseline` fixtures, `@pytest.mark.torch_max_latency`, `--torch-update-perf`, `--torch-perf-strict`, `--torch-perf-file`, `measure_latency`, `measure_peak_memory`, `check_perf` → `PerfResult`, `PerfStore` |
+| Golden (snapshot) files for tensors and nested outputs | `golden` fixture, `@pytest.mark.torch_golden`, `--torch-update-golden` |
+| Failure reproduction bundles: record a failing test's seed, inputs and environment, replay it anywhere | `--torch-repro-dir`, `--torch-repro`, `--torch-repro-max-weights-mb`, `record_repro`, `load_repro` |
+
+**Training** · [training sanity](https://akj7.github.io/pytest-torch/guides/training/)
+
+| Feature | API |
+|---|---|
+| Finite gradients, every parameter learns, loss decreases, one batch overfits | `assert_gradients_finite`, `assert_all_params_receive_grad`, `assert_loss_decreases`, `assert_overfits_one_batch` → `TrainingRun` |
+| Custom backward passes against finite differences | `assert_gradcheck` |
+| Frozen parameters stay frozen through real optimizer steps, including BatchNorm statistics and weight decay | `assert_frozen` |
+
+**Determinism, configuration and CI** · [performance and determinism](https://akj7.github.io/pytest-torch/guides/performance/), [tolerances](https://akj7.github.io/pytest-torch/guides/tolerances/), [reference](https://akj7.github.io/pytest-torch/reference/cli/)
+
+| Feature | API |
+|---|---|
+| Seeding with per-test seeds, printed on failure; deterministic algorithms | `torch_seed` fixture, `@pytest.mark.torch_seed`, `--torch-seed`, `--torch-seed-mode`, `--torch-autoseed`, `--torch-deterministic`, `seed_everything`, `deterministic_algorithms` |
+| Nondeterminism diagnosis: RNG use vs nondeterministic kernels | `assert_deterministic`, `diagnose_nondeterminism` → `NondeterminismReport`, `measure_nondeterminism` → `VarianceResult` |
+| Hidden host-device synchronizations (`.item()`, `.cpu()`, `if tensor:`) | `assert_no_host_sync`, `forbid_host_sync` |
+| Project-wide tolerances per dtype, check and device | `[tool.pytest_torch.tolerance]`, `@pytest.mark.torch_tolerance`, `tolerance_overrides` |
+| pytest-xdist: workers spread over GPUs, memory split, exclusive GPU tests | `--torch-xdist-gpus`, `--torch-gpu-memory-fraction`, `@pytest.mark.torch_gpu_exclusive`, `FileLock` |
+| Mismatch heatmaps and GitHub Actions annotations for failing tests | `--torch-failure-artifacts`, `--torch-github-annotations`, `save_mismatch_heatmap`, `github_annotation` |
+| Session-cached Hugging Face, timm and torchvision models | `model_loader` fixture, `ModelLoader` |
+| Run a test body without autograd | `inference_mode` fixture |
+| Zero-code testing of any model: Hugging Face, timm, torchvision or your own, with inferred inputs | `--torch-model`, `--torch-model-checks`, `--torch-model-inputs`, `--torch-model-pretrained` |
+| Generated test suites: contract, compile, export, TorchScript, ONNX, AOTInductor, autocast, golden, output spec, checkpoint, layouts, frozen, training | `ModelSuite` |
+| The generated suite once per config file (YAML, JSON, Hydra-style), with overrides to shrink each config | `ModelSuite.configs`, `config_overrides`, `model_config` fixture |
 
 ## Installation
 
@@ -163,11 +235,13 @@ comment: a one-line bug that makes the test fail.
 | Releases | [`test_dataset_metrics.py`](examples/test_dataset_metrics.py), [`test_checkpoints.py`](examples/test_checkpoints.py), [`test_failure_repro.py`](examples/test_failure_repro.py), [`test_tiny_classifier.py`](examples/test_tiny_classifier.py) |
 | More | [`test_training_sanity.py`](examples/test_training_sanity.py), [`test_nondeterminism.py`](examples/test_nondeterminism.py) |
 
-[`examples/integration/`](examples/integration/) has three small but realistic projects, laid
+[`examples/integration/`](examples/integration/) has four small but realistic projects, laid
 out like real repositories and tested end to end: a transformer
 [text classifier](examples/integration/text_classification/), an
 [image classifier with its deployment pipeline](examples/integration/image_classification/),
-and a [small GPT with a KV cache](examples/integration/language_model/).
+a [small GPT with a KV cache](examples/integration/language_model/), and a
+[navigation policy tested once per YAML config](examples/integration/navigation_policy/)
+(habitat-baselines style, with a frozen encoder and a transformer memory).
 
 ## Development
 

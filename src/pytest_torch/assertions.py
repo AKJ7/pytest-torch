@@ -398,7 +398,16 @@ def batch_invariance_problems(
     with torch.inference_mode():
         if batched is None:
             batched = call_model(model, inputs)
-        singles = [call_model(model, slice_batch(inputs, i, size)) for i in range(size)]
+        try:
+            singles = [call_model(model, slice_batch(inputs, i, size)) for i in range(size)]
+        except Exception as exc:  # e.g. BatchNorm in training mode refuses a batch of one
+            training = [n or "<root>" for n, m in getattr(model, "named_modules", list)() if m.training]
+            hint = (f" The model is in training mode ({', '.join(training[:3])}); call model.eval()."
+                    if training else "")
+            raise AssertionError(
+                f"Batch invariance: the model fails on a single sample: {type(exc).__name__}: "
+                f"{str(exc).splitlines()[0] if str(exc) else ''}.{hint}"
+            ) from exc
     expected = batch_aligned(batched, size)
     if not expected:
         raise BatchInvarianceNotApplicable("no batch-aligned tensor outputs to compare")

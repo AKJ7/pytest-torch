@@ -57,6 +57,7 @@ plugins:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Test any model with no code: guides/zero-code.md
   - Check one prediction:
       - Inference correctness: guides/inference.md
       - Output specifications: guides/output-specs.md

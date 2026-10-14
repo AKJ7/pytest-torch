@@ -62,7 +62,10 @@ def xpu(monkeypatch):
 
     fake = FakeXPU()
     monkeypatch.setattr(torch, "xpu", fake, raising=False)
+    # The fake XPU must be the only accelerator, whatever the machine has (the macOS CI
+    # runner really has MPS).
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
     monkeypatch.setattr(_session, "selected_devices", None)  # independent of the outer --torch-device
     return fake
 

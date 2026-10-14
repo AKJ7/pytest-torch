@@ -11,6 +11,14 @@ mismatch is and how large it is.
 pip install pytest-torch
 ```
 
+Or try it on any model first, with no test file:
+
+```bash
+pytest --torch-model=hf:google-bert/bert-base-uncased     # or timm:NAME, torchvision:NAME, mypackage.models:Net
+```
+
+See [test any model with no code](guides/zero-code.md).
+
 ## Start here
 
 Pick the question you're asking. Each path is one or two calls; every snippet is runnable in
@@ -89,6 +97,9 @@ and CI compares against them. Go further: [dataset metrics](guides/dataset-metri
 (contract, compile, export, output spec, checkpoint, training, ...), and each becomes a test
 on every device. The helpers it uses stay available on their own.
 
-!!! note "Status: alpha"
-    The API may still change. Requires Python 3.9+, pytest 7+ and PyTorch 2.0+
-    (`torch.export` features need 2.2+, AOTInductor 2.6+).
+!!! note "Requirements and stability"
+    Python 3.9+, pytest 7+ and PyTorch 2.0+. `torch.export` checks skip on torch 2.0 and
+    work best on recent versions (CI exercises them from 2.2); AOTInductor needs 2.6+. From 1.0, pytest-torch follows semantic
+    versioning: breaking changes to the public API (the names exported from `pytest_torch`,
+    the fixtures, markers, command-line options and configuration) only come with a new major
+    version.

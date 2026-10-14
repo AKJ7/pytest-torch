@@ -51,6 +51,7 @@ test_models.py::TestTextClassifier::test_gradients_finite[cpu] PASSED
 | `output_spec` | `test_output_spec` | [`assert_output_spec`](output-specs.md) with the class's `output_spec`; `B` = batch size |
 | `checkpoint` | `test_checkpoint_roundtrip` | [`assert_checkpoint_roundtrip`](checkpoints.md) |
 | `layouts` | `test_layout_invariance` | [`assert_layout_invariant`](matrix.md#memory-layouts) |
+| `frozen` | `test_frozen` | [`assert_frozen`](training.md) with `frozen` / `frozen_parameters()`; needs `loss()` |
 | `training` | `test_gradients_finite`, `test_all_params_receive_grad`, `test_loss_decreases`, `test_overfits_one_batch` | [training sanity](training.md); needs `loss()` |
 
 Checks you don't list don't exist on the class at all (no wall of skips). Compile, export
@@ -75,6 +76,47 @@ run a smaller batch through the same program (the example batch must be at least
 
 Mistakes such as an unknown check, an unknown option key, or `"training"` without a
 `loss()` method fail at collection with a message saying what to fix.
+
+## One suite per config
+
+Projects with many configs (Hydra / habitat-baselines style YAML files, one per experiment)
+can run every generated test once per config: each config builds a different model, and
+option combinations are where bugs hide.
+
+```python
+from pathlib import Path
+
+class TestNavPolicy(ModelSuite):
+    configs = sorted(Path("configs").rglob("*.yaml"))
+    # Shrink every config so tests stay fast (dotted keys into the loaded config).
+    config_overrides = {"habitat_baselines.rl.ddppo.hidden_size": 32}
+    checks = ("contract", "output_spec", "checkpoint", "frozen", "training")
+
+    def make_model(self):
+        return NavPolicy(self.config)          # the current config, overrides applied
+
+    def make_inputs(self, make_tensor):
+        n = self.config["habitat"]["task"]["num_object_categories"]
+        return {"rgb": make_tensor(4, 6, 3, 32, 32), "objectgoal": make_tensor(4, 6, dtype=torch.long, high=n)}
+
+    def frozen_parameters(self):               # what `train_encoder: false` freezes
+        return [] if self.config["habitat_baselines"]["rl"]["ddppo"]["train_encoder"] else ["visual_encoder.*"]
+```
+
+```
+test_frozen[transformer_rope_frozen-cpu] PASSED
+test_frozen[gru_finetune-cpu] SKIPPED (nothing is frozen in this configuration)
+```
+
+- `configs` holds paths (`.yaml`/`.yml` need PyYAML, `.json`) or Python objects; test ids
+  use the file name (`config0`, ... for objects). An empty list is an error, so a wrong
+  glob can't silently run nothing.
+- Override `load_config(self, source)` to compose with Hydra or OmegaConf instead, and
+  `config_id(cls, source)` for other ids. A `config_overrides` key that doesn't exist in a
+  config fails with the key's name.
+- `self.config` is set for generated tests and for your own: request the `model_config`
+  fixture in a hand-written test method to run it once per config too.
+- With configs, golden files are named `<ClassName>[<config>].pt`, one per config.
 
 ## Customizing
 

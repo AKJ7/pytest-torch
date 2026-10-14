@@ -129,7 +129,7 @@ def _combine(outputs: list[Any], lengths: list[int], seq_dim: int) -> Any:
     if isinstance(first, Mapping):
         combined = {k: _combine([o[k] for o in outputs], lengths, seq_dim) for k in first}
         try:
-            return type(first)(combined)
+            return type(first)(combined)  # type: ignore[call-arg]
         except Exception:
             return combined
     if _is_namedtuple(first):

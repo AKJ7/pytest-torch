@@ -80,9 +80,9 @@ def test_masked_tokens_are_ignored(model):
 
 
 hypothesis = pytest.importorskip("hypothesis")
-from hypothesis import given, settings  # noqa: E402
+from hypothesis import given, settings
 
-from pytest_torch.strategies import padded_batches  # noqa: E402
+from pytest_torch.strategies import padded_batches
 
 torch.manual_seed(0)
 HYPOTHESIS_MODEL = TextClassifier(len(TOKENIZER)).eval()

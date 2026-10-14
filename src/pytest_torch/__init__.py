@@ -56,6 +56,7 @@ _EXPORTS = {
     "assert_gradients_finite": "training",
     "assert_all_params_receive_grad": "training",
     "assert_gradcheck": "training",
+    "assert_frozen": "training",
     "assert_loss_decreases": "training",
     "assert_overfits_one_batch": "training",
     "TrainingRun": "training",
@@ -116,65 +117,66 @@ __all__ = list(_EXPORTS)
 
 if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .assertions import (
-        assert_tensors_close,
-        assert_outputs_close,
-        assert_finite,
         assert_batch_invariant,
+        assert_finite,
+        assert_outputs_close,
+        assert_tensors_close,
     )
-    from .contract import check_inference_contract, ContractReport, CheckResult
-    from .divergence import localize_divergence, DivergenceReport, LayerDiff
-    from .invariance import (
-        assert_padding_invariant,
-        assert_mask_invariant,
-        assert_invariant,
-        assert_equivariant,
-        assert_permutation_invariant,
-        assert_permutation_equivariant,
-    )
-    from .parity import (
-        assert_compile_parity,
-        assert_torchscript_parity,
-        assert_onnx_parity,
-        assert_models_agree,
-        compare_outputs,
-        AgreementMetrics,
-        assert_matches_reference,
-        assert_generation_equal,
-        assert_export_parity,
-        assert_aoti_parity,
-        assert_autocast_parity,
-    )
-    from .training import (
-        assert_gradients_finite,
-        assert_all_params_receive_grad,
-        assert_gradcheck,
-        assert_loss_decreases,
-        assert_overfits_one_batch,
-        TrainingRun,
-    )
-    from .suite import ModelSuite
-    from .perf import measure_latency, measure_peak_memory, check_perf, PerfStore, PerfResult
+    from .checkpoint import assert_checkpoint_loads, assert_checkpoint_roundtrip
     from .compilation import assert_no_graph_breaks, assert_no_recompiles
-    from .sync import forbid_host_sync, assert_no_host_sync
+    from .contract import CheckResult, ContractReport, check_inference_contract
+    from .devices import available_devices
+    from .divergence import DivergenceReport, LayerDiff, localize_divergence
+    from .evaluation import MetricResult, evaluate, evaluate_detailed, paired_difference
+    from .integrations import ModelLoader
+    from .invariance import (
+        assert_equivariant,
+        assert_invariant,
+        assert_layout_invariant,
+        assert_mask_invariant,
+        assert_padding_invariant,
+        assert_permutation_equivariant,
+        assert_permutation_invariant,
+    )
     from .nondeterminism import (
-        measure_nondeterminism,
-        diagnose_nondeterminism,
-        assert_deterministic,
         NondeterminismReport,
         VarianceResult,
+        assert_deterministic,
+        diagnose_nondeterminism,
+        measure_nondeterminism,
     )
-    from .report import save_mismatch_heatmap, github_annotation
     from .parallel import FileLock
-    from .integrations import ModelLoader
-    from .utils import seed_everything, deterministic_algorithms, is_compile_supported
-    from .devices import available_devices
+    from .parity import (
+        AgreementMetrics,
+        assert_aoti_parity,
+        assert_autocast_parity,
+        assert_compile_parity,
+        assert_export_parity,
+        assert_generation_equal,
+        assert_matches_reference,
+        assert_models_agree,
+        assert_onnx_parity,
+        assert_torchscript_parity,
+        compare_outputs,
+    )
+    from .perf import PerfResult, PerfStore, check_perf, measure_latency, measure_peak_memory
+    from .report import github_annotation, save_mismatch_heatmap
+    from .repro import load_repro, record_repro
+    from .specs import Probabilities, TensorSpec, assert_output_spec
+    from .stateful import StreamingEquivalence, StreamingReport, assert_streaming_equivalent
+    from .suite import ModelSuite
+    from .sync import assert_no_host_sync, forbid_host_sync
     from .tolerances import tolerance_overrides
-    from .specs import TensorSpec, Probabilities, assert_output_spec
-    from .repro import record_repro, load_repro
-    from .checkpoint import assert_checkpoint_roundtrip, assert_checkpoint_loads
-    from .invariance import assert_layout_invariant
-    from .evaluation import evaluate, evaluate_detailed, paired_difference, MetricResult
-    from .stateful import assert_streaming_equivalent, StreamingEquivalence, StreamingReport
+    from .training import (
+        TrainingRun,
+        assert_all_params_receive_grad,
+        assert_frozen,
+        assert_gradcheck,
+        assert_gradients_finite,
+        assert_loss_decreases,
+        assert_overfits_one_batch,
+    )
+    from .utils import deterministic_algorithms, is_compile_supported, seed_everything
 
 
 def __getattr__(name: str):

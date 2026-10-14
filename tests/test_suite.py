@@ -1,6 +1,8 @@
 import pytest
 
-pytest.importorskip("torch")
+torch = pytest.importorskip("torch")
+# torch.export arrived in torch 2.1; before that the export check skips.
+HAS_EXPORT = getattr(getattr(torch, "export", None), "export", None) is not None
 
 HEADER = """
 import torch
@@ -38,12 +40,12 @@ class TestNet(ModelSuite):
 """,
         "-v",
     )
-    result.assert_outcomes(passed=3)
+    result.assert_outcomes(passed=3 if HAS_EXPORT else 2, skipped=0 if HAS_EXPORT else 1)
     result.stdout.fnmatch_lines(
         [
             "*TestNet::test_inference_contract[[]cpu[]] PASSED*",
             "*TestNet::test_compile_parity[[]cpu[]] PASSED*",
-            "*TestNet::test_export_parity[[]cpu[]] PASSED*",
+            f"*TestNet::test_export_parity[[]cpu[]] {'PASSED' if HAS_EXPORT else 'SKIPPED'}*",
         ]
     )
 
@@ -127,7 +129,7 @@ class TestNet(ModelSuite):
         return make_tensor(8, 8)
 """,
     )
-    result.assert_outcomes(passed=1)
+    result.assert_outcomes(passed=1) if HAS_EXPORT else result.assert_outcomes(skipped=1)
 
 
 def test_golden_check_uses_the_class_name(pytester):
@@ -199,3 +201,91 @@ def test_output_spec_check_needs_a_spec(pytester):
     result = run(pytester, '\nclass TestNet(ModelSuite):\n    checks = ("output_spec",)\n')
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*needs an output_spec attribute*"])
+
+
+# --------------------------------------------------------------------------- #
+# one suite per config
+# --------------------------------------------------------------------------- #
+CONFIG_SUITE = """
+import torch
+from torch import nn
+from torch.nn import functional as F
+from pytest_torch import ModelSuite
+
+
+class Net(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.encoder = nn.Linear(8, cfg["model"]["hidden"])
+        self.head = nn.Linear(cfg["model"]["hidden"], 3)
+        if cfg["model"]["freeze_encoder"]:
+            self.encoder.requires_grad_(False)
+
+    def forward(self, x):
+        return self.head(torch.relu(self.encoder(x)))
+
+
+class TestNet(ModelSuite):
+    configs = {configs}
+    config_overrides = {overrides}
+    checks = ("contract", "frozen", "golden")
+
+    def make_model(self):
+        return Net(self.config)
+
+    def make_inputs(self, make_tensor):
+        return make_tensor(4, 8)
+
+    def loss(self, output, inputs):
+        return F.cross_entropy(output, torch.arange(4, device=output.device) % 3)
+
+    def frozen_parameters(self):
+        return ["encoder.*"] if self.config["model"]["freeze_encoder"] else []
+
+    def test_own(self, model_config):
+        assert self.config is model_config and self.config["model"]["hidden"] == {expected_hidden}
+"""
+
+
+def write_configs(pytester):
+    (pytester.path / "configs").mkdir()
+    (pytester.path / "configs" / "frozen.yaml").write_text("model:\n  hidden: 64\n  freeze_encoder: true\n")
+    (pytester.path / "configs" / "finetune.json").write_text('{"model": {"hidden": 64, "freeze_encoder": false}}')
+
+
+def run_configs(pytester, configs, overrides="{}", expected_hidden=64, *args):
+    pytester.makepyfile(test_cfg=CONFIG_SUITE.format(configs=configs, overrides=overrides,
+                                                     expected_hidden=expected_hidden))
+    return pytester.runpytest_subprocess("-p", "no:cacheprovider", "--torch-device=cpu", "-W", "ignore", "-v", "-rs", *args)
+
+
+def test_every_generated_test_runs_once_per_config(pytester):
+    pytest.importorskip("yaml")
+    write_configs(pytester)
+    configs = 'sorted(str(p) for p in __import__("pathlib").Path("configs").iterdir())'
+    run_configs(pytester, configs, "{}", 64, "--torch-update-golden").assert_outcomes(passed=7, skipped=1)
+    result = run_configs(pytester, configs, "{}", 64)
+    result.assert_outcomes(passed=7, skipped=1)
+    for line in ("*TestNet::test_inference_contract[[]finetune-cpu[]] PASSED*",
+                 "*TestNet::test_frozen[[]frozen-cpu[]] PASSED*",
+                 "*TestNet::test_own[[]frozen[]] PASSED*"):
+        result.stdout.fnmatch_lines([line])
+    result.stdout.fnmatch_lines(["*nothing is frozen in this configuration*"])
+    goldens = sorted(p.name for p in (pytester.path / "__golden__").iterdir())
+    assert goldens == ["TestNet[finetune].pt", "TestNet[frozen].pt"]  # one per config
+
+
+def test_overrides_and_python_object_configs(pytester):
+    configs = '[{"model": {"hidden": 64, "freeze_encoder": True}}, {"model": {"hidden": 32, "freeze_encoder": False}}]'
+    result = run_configs(pytester, configs, '{"model.hidden": 16}', 16, "-k", "own")
+    result.assert_outcomes(passed=2)
+    result.stdout.fnmatch_lines(["*test_own[[]config0[]] PASSED*", "*test_own[[]config1[]] PASSED*"])
+
+
+def test_bad_override_path_and_empty_configs_are_reported(pytester):
+    configs = '[{"model": {"hidden": 64, "freeze_encoder": True}}]'
+    result = run_configs(pytester, configs, '{"modle.hidden": 16}', 16, "-k", "own")
+    result.stdout.fnmatch_lines(["*config_overrides: 'modle.hidden': the config has no 'modle' there*"])
+    result = run_configs(pytester, "[]")
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(["*configs is empty (check the path or glob that builds it)*"])

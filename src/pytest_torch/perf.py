@@ -51,7 +51,7 @@ def measure_peak_memory(fn: Callable, *args, device: Any = "cpu", **kwargs) -> f
     """Peak extra allocated memory in MB during one call. CUDA and XPU; ``None`` elsewhere."""
     if not devices.supports_memory_stats(device):
         return None
-    backend = devices.backend(device)
+    backend = devices._gpu_backend(device)  # supports_memory_stats: a GPU backend
     sync(device)
     backend.reset_peak_memory_stats(device)
     baseline = backend.memory_allocated(device)
@@ -91,15 +91,15 @@ class PerfStore:
         data = self._load()
         data["entries"][key] = entry
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+        fd, tmp_name = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+        tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(data, handle, indent=2, sort_keys=True)
                 handle.write("\n")
-            os.replace(tmp, self.path)
+            tmp.replace(self.path)  # atomic: readers never see a half-written file
         except BaseException:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+            tmp.unlink(missing_ok=True)
             raise
 
 

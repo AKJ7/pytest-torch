@@ -31,7 +31,7 @@ class TensorSpec:
     (inclusive). ``dtype`` may be a dtype or a tuple of allowed dtypes.
     """
 
-    shape: Sequence[int | str | None | type(...)] | None = None
+    shape: Sequence[Any] | None = None  # ints, symbol names, None, or one ...
     dtype: torch.dtype | tuple[torch.dtype, ...] | None = None
     finite: bool = True
     min: float | None = None
@@ -69,7 +69,7 @@ class Probabilities(TensorSpec):
     def _value_problems(self, t: torch.Tensor) -> list[str]:
         problems = super()._value_problems(t)
         if not t.is_floating_point():
-            return problems + [f"probabilities must be floating point, got {t.dtype}"]
+            return [*problems, f"probabilities must be floating point, got {t.dtype}"]
         x = t.detach().double()
         if x.numel() == 0:
             return problems

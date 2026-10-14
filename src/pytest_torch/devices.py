@@ -29,6 +29,14 @@ def backend(device: Any) -> ModuleType | None:
     return getattr(torch, kind, None)
 
 
+def _gpu_backend(device: Any) -> ModuleType:
+    """``torch.cuda`` / ``torch.xpu``: callers only ask for GPU kinds this torch has."""
+    module = backend(device)
+    if module is None:
+        raise RuntimeError(f"this torch has no backend for {_kind(device)!r}")
+    return module
+
+
 def is_available(device: Any) -> bool:
     kind = _kind(device)
     if kind == "cpu":
@@ -51,14 +59,14 @@ def available_devices() -> list[str]:
 def device_count(kind: str) -> int:
     if kind not in GPU_KINDS or not is_available(kind):
         return 0
-    return int(backend(kind).device_count())
+    return int(_gpu_backend(kind).device_count())
 
 
 def synchronize(device: Any) -> None:
     """Wait for all queued work on ``device`` (no-op on CPU)."""
     kind = _kind(device)
     if kind in GPU_KINDS:
-        backend(kind).synchronize(device)
+        _gpu_backend(kind).synchronize(device)
     elif kind == "mps":
         torch.mps.synchronize()
 
@@ -67,7 +75,7 @@ def manual_seed_all(seed: int) -> None:
     """Seed every available GPU backend (``torch.manual_seed`` covers CPU and MPS)."""
     for kind in GPU_KINDS:
         if is_available(kind):
-            backend(kind).manual_seed_all(seed)
+            _gpu_backend(kind).manual_seed_all(seed)
 
 
 def device_name(device: Any) -> str | None:
@@ -88,9 +96,8 @@ def supports_memory_stats(device: Any) -> bool:
 
 
 def set_device(device: Any) -> None:
-    module = backend(device)
     if _kind(device) in GPU_KINDS:
-        module.set_device(torch.device(device))
+        _gpu_backend(device).set_device(torch.device(device))
 
 
 def set_memory_fraction(kind: str, fraction: float, index: int) -> bool:

@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import math
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 CORPUS = (
     "the quick brown fox jumps over the lazy dog. "
@@ -27,7 +26,7 @@ def decode(ids: torch.Tensor) -> str:
 class LMOutput(NamedTuple):
     logits: torch.Tensor
     # one (keys, values) pair per layer, each (batch, heads, length, head_dim); None without cache
-    past: Optional[tuple]
+    past: tuple | None
 
 
 class CausalSelfAttention(nn.Module):
@@ -77,7 +76,7 @@ class TinyGPT(nn.Module):
         self.lm_head = nn.Linear(dim, vocab_size, bias=False)
         self.lm_head.weight = self.tokens.weight  # weight tying
 
-    def forward(self, input_ids: torch.Tensor, past: Optional[tuple] = None, use_cache: bool = False) -> LMOutput:
+    def forward(self, input_ids: torch.Tensor, past: tuple | None = None, use_cache: bool = False) -> LMOutput:
         start = 0 if past is None else past[0][0].shape[2]
         positions = torch.arange(start, start + input_ids.shape[1], device=input_ids.device)
         x = self.tokens(input_ids) + self.positions(positions)

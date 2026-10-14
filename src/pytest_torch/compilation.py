@@ -58,7 +58,7 @@ def assert_no_recompiles(
     batches = [first] + [to_device(extra, device) for extra in more_inputs]
     calls: list[int] = []
 
-    def counting_backend(gm, example_inputs):
+    def counting_backend(gm, _example_inputs):  # signature required by torch.compile
         calls.append(len(calls) + 1)
         return gm.forward
 

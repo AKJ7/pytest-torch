@@ -6,7 +6,6 @@ from torch import nn
 from pytest_torch import (
     assert_batch_invariant,
     assert_finite,
-    assert_outputs_close,
     check_inference_contract,
     localize_divergence,
 )

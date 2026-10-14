@@ -1,0 +1,23 @@
+# Shaped like a habitat-baselines object-navigation config (e.g. memo's
+# configs/baseline/nav2obj_hssd_small.yaml), reduced to what builds the policy network.
+habitat:
+  task:
+    num_object_categories: 6
+  environment:
+    max_episode_steps: 1024
+habitat_baselines:
+  num_environments: 24
+  rl:
+    policy:
+      main_agent:
+        name: TransformerNavPolicy
+        action_distribution_type: gaussian
+        transformer_config:
+          n_layers: 4
+          n_heads: 8
+          pos_emb: rope
+    ddppo:
+      backbone: small_cnn
+      rnn_type: transformer
+      hidden_size: 256
+      train_encoder: false

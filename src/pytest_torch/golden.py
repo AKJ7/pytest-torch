@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,7 +21,7 @@ class Golden:
         from .assertions import format_problems, leaves_diff
         from .utils import flatten
 
-        leaves = {}
+        leaves: dict[str, Any] = {}
         for path, leaf in flatten(actual):
             if isinstance(leaf, torch.Tensor):
                 leaves[path] = leaf.detach().cpu()
