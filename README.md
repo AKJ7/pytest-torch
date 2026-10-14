@@ -169,7 +169,7 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | `torch.compile` health: one graph, no recompiles | `assert_no_graph_breaks`, `assert_no_recompiles`, `is_compile_supported` |
 | Stateful and streaming models: chunked vs full, resets, request isolation, user-defined equivalence | `assert_streaming_equivalent`, `StreamingEquivalence` → `StreamingReport` |
 
-**Check a release** · [dataset metrics](https://akj7.github.io/pytest-torch/guides/dataset-metrics/), [checkpoints](https://akj7.github.io/pytest-torch/guides/checkpoints/), [performance](https://akj7.github.io/pytest-torch/guides/performance/), [failure reproduction](https://akj7.github.io/pytest-torch/guides/repro/)
+**Check a release** · [dataset metrics](https://akj7.github.io/pytest-torch/guides/dataset-metrics/), [checkpoints](https://akj7.github.io/pytest-torch/guides/checkpoints/), [performance](https://akj7.github.io/pytest-torch/guides/performance/), [benchmarks](https://akj7.github.io/pytest-torch/guides/benchmarks/), [failure reproduction](https://akj7.github.io/pytest-torch/guides/repro/)
 
 | Feature | API |
 |---|---|
@@ -177,6 +177,7 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | Paired comparisons with bootstrap confidence intervals: noise on a small set isn't a regression | `paired_difference`, `evaluate`, `evaluate_detailed` |
 | Checkpoints: save/reload preserves predictions; old checkpoints still load into new code | `assert_checkpoint_roundtrip`, `assert_checkpoint_loads` |
 | Latency budgets and per-machine performance baselines, with peak memory on CUDA and XPU | `latency`, `perf_baseline` fixtures, `@pytest.mark.torch_max_latency`, `--torch-update-perf`, `--torch-perf-strict`, `--torch-perf-file`, `measure_latency`, `measure_peak_memory`, `check_perf` → `PerfResult`, `PerfStore` |
+| Benchmark suites over batch sizes, dtypes and eager/`torch.compile`: median and p90 latency, throughput, peak memory, compile time, per-machine baselines, an end-of-run report and JSON | `BenchmarkSuite` → `BenchmarkResult`, `@pytest.mark.torch_benchmark`, `--torch-benchmark`, `--torch-benchmark-json`, `compare_perf` |
 | Golden (snapshot) files for tensors and nested outputs | `golden` fixture, `@pytest.mark.torch_golden`, `--torch-update-golden` |
 | Failure reproduction bundles: record a failing test's seed, inputs and environment, replay it anywhere | `--torch-repro-dir`, `--torch-repro`, `--torch-repro-max-weights-mb`, `record_repro`, `load_repro` |
 
@@ -232,7 +233,7 @@ comment: a one-line bug that makes the test fail.
 | Start with | [`test_start_here.py`](examples/test_start_here.py) (the three paths above), [`test_model_suite.py`](examples/test_model_suite.py), [`test_markers.py`](examples/test_markers.py) |
 | One prediction | [`test_output_specs.py`](examples/test_output_specs.py), [`test_metamorphic.py`](examples/test_metamorphic.py), [`test_unusual_inputs.py`](examples/test_unusual_inputs.py), [`test_dtype_matrix.py`](examples/test_dtype_matrix.py), [`test_property_based.py`](examples/test_property_based.py) |
 | Model changes | [`test_reimplementation.py`](examples/test_reimplementation.py), [`test_deployment.py`](examples/test_deployment.py), [`test_streaming.py`](examples/test_streaming.py) |
-| Releases | [`test_dataset_metrics.py`](examples/test_dataset_metrics.py), [`test_checkpoints.py`](examples/test_checkpoints.py), [`test_failure_repro.py`](examples/test_failure_repro.py), [`test_tiny_classifier.py`](examples/test_tiny_classifier.py) |
+| Releases | [`test_dataset_metrics.py`](examples/test_dataset_metrics.py), [`test_checkpoints.py`](examples/test_checkpoints.py), [`test_benchmarks.py`](examples/test_benchmarks.py), [`test_failure_repro.py`](examples/test_failure_repro.py), [`test_tiny_classifier.py`](examples/test_tiny_classifier.py) |
 | More | [`test_training_sanity.py`](examples/test_training_sanity.py), [`test_nondeterminism.py`](examples/test_nondeterminism.py) |
 
 [`examples/integration/`](examples/integration/) has four small but realistic projects, laid

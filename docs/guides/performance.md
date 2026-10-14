@@ -26,6 +26,9 @@ so numbers from different machines never mix. A regression is
 skips the test (`--torch-perf-strict` fails it instead). Peak memory is tracked on CUDA and
 Intel XPU.
 
+To benchmark a model over batch sizes, dtypes and `torch.compile`, with an end-of-run
+report, see [Benchmark suites](benchmarks.md).
+
 ## Host-device syncs
 
 ```python

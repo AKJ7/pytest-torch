@@ -62,6 +62,19 @@ def pytest_addoption(parser):
         help="Rewrite golden files instead of comparing. "
         "Use with --torch-device=cpu for a portable reference.",
     )
+    # benchmarks
+    group.addoption(
+        "--torch-benchmark",
+        action="store_true",
+        help="Run benchmarks (BenchmarkSuite and @pytest.mark.torch_benchmark tests); "
+        "they are deselected otherwise.",
+    )
+    group.addoption(
+        "--torch-benchmark-json",
+        default=None,
+        metavar="PATH",
+        help="Write the benchmark results of the run to PATH as JSON.",
+    )
     # performance baselines
     group.addoption(
         "--torch-update-perf",
@@ -208,6 +221,7 @@ def _save_global_state() -> dict:
         "tolerances": dict(_tolerances._config),
         "repro": dict(_repro._state),
         "artifacts": dict(_artifacts._state),
+        "benchmarks": list(_benchmark_results()),
     }
 
 
@@ -221,6 +235,13 @@ def _restore_global_state(saved: dict) -> None:
     _repro._state.update(saved["repro"])
     _artifacts._state.clear()
     _artifacts._state.update(saved["artifacts"])
+    _benchmark_results()[:] = saved["benchmarks"]
+
+
+def _benchmark_results() -> list:
+    from . import benchmark
+
+    return benchmark.results
 
 
 def pytest_unconfigure(config):
@@ -244,6 +265,7 @@ def pytest_configure(config):
         "torch_tolerance(**entries): override default tolerances, keys as in "
         "[tool.pytest_torch.tolerance], e.g. bfloat16=(2e-2, 1e-2)",
         "torch_dtypes(*dtypes): dtypes the `torch_dtype` fixture runs this test with",
+        "torch_benchmark: a benchmark; runs only with --torch-benchmark",
     ):
         config.addinivalue_line("markers", line)
     _configure_tolerances(config)
@@ -362,6 +384,12 @@ def _matches_bundle(item, bundle: dict) -> bool:
 
 def pytest_collection_modifyitems(session, config, items):
     from . import _session
+
+    if not config.getoption("torch_benchmark"):  # benchmarks are slow: opt in
+        benchmarks = [i for i in items if i.get_closest_marker("torch_benchmark") is not None]
+        if benchmarks:
+            config.hook.pytest_deselected(items=benchmarks)
+            items[:] = [i for i in items if i.get_closest_marker("torch_benchmark") is None]
 
     if _session.model_specs:  # zero-code tests: test_builds and the selected checks
         from . import zero_code_tests
@@ -531,6 +559,11 @@ def pytest_generate_tests(metafunc):
                              indirect=True)
     if "torch_device" in metafunc.fixturenames:
         metafunc.parametrize("torch_device", _devices(metafunc.config), indirect=True)
+    if "benchmark_case" in metafunc.fixturenames and metafunc.cls is not None:
+        from .benchmark import cases
+
+        matrix = cases(metafunc.cls)
+        metafunc.parametrize("benchmark_case", matrix, ids=[c.id for c in matrix])
     if "torch_dtype" in metafunc.fixturenames:
         metafunc.parametrize("torch_dtype", _dtypes(metafunc), indirect=True)
 
@@ -868,3 +901,23 @@ def metric_baseline(request):
         return result
 
     return check
+
+
+# --------------------------------------------------------------------------- #
+# Benchmark report
+# --------------------------------------------------------------------------- #
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    from .benchmark import format_table, results
+
+    if not results:
+        return
+    terminalreporter.section("pytest-torch benchmarks")
+    for line in format_table(results):
+        terminalreporter.write_line(line)
+    path = config.getoption("torch_benchmark_json")
+    if path:
+        import json
+
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps([r.as_dict() for r in results], indent=2) + "\n", encoding="utf-8")
+        terminalreporter.write_line(f"benchmark results written to {path}")

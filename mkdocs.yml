@@ -69,6 +69,7 @@ nav:
       - Dataset metrics: guides/dataset-metrics.md
       - Checkpoints: guides/checkpoints.md
       - Performance and determinism: guides/performance.md
+      - Benchmark suites: guides/benchmarks.md
       - Failure reproduction: guides/repro.md
   - Generated test suites: guides/model-suite.md
   - More:

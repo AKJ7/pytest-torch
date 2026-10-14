@@ -121,7 +121,7 @@ ignore_missing_imports = true  # transformers, timm, onnxruntime, hypothesis are
 # Pytest hooks and fixtures: argument names are fixed by pytest, and fixtures such as
 # torch_seed are requested for their side effect.
 "src/pytest_torch/plugin.py" = ["ARG001"]
-"src/pytest_torch/suite.py" = ["ARG002"]
+"src/pytest_torch/{suite,benchmark}.py" = ["ARG002"]
 "src/pytest_torch/zero_code_tests.py" = ["ARG001"]
 # E402: pytest.importorskip comes first. RUF012: ModelSuite subclasses set its class
 # attributes (checks, check_options, output_spec, ...) as plain values, by design.

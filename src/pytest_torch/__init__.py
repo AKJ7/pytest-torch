@@ -66,6 +66,7 @@ _EXPORTS = {
     "measure_latency": "perf",
     "measure_peak_memory": "perf",
     "check_perf": "perf",
+    "compare_perf": "perf",
     "PerfStore": "perf",
     "PerfResult": "perf",
     # torch.compile health, host-device syncs
@@ -107,6 +108,9 @@ _EXPORTS = {
     "assert_streaming_equivalent": "stateful",
     "StreamingEquivalence": "stateful",
     "StreamingReport": "stateful",
+    # benchmarks
+    "BenchmarkSuite": "benchmark",
+    "BenchmarkResult": "benchmark",
     # dataset evaluation
     "evaluate": "evaluation",
     "evaluate_detailed": "evaluation",
@@ -122,6 +126,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         assert_outputs_close,
         assert_tensors_close,
     )
+    from .benchmark import BenchmarkResult, BenchmarkSuite
     from .checkpoint import assert_checkpoint_loads, assert_checkpoint_roundtrip
     from .compilation import assert_no_graph_breaks, assert_no_recompiles
     from .contract import CheckResult, ContractReport, check_inference_contract
@@ -159,7 +164,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         assert_torchscript_parity,
         compare_outputs,
     )
-    from .perf import PerfResult, PerfStore, check_perf, measure_latency, measure_peak_memory
+    from .perf import PerfResult, PerfStore, check_perf, compare_perf, measure_latency, measure_peak_memory
     from .report import github_annotation, save_mismatch_heatmap
     from .repro import load_repro, record_repro
     from .specs import Probabilities, TensorSpec, assert_output_spec

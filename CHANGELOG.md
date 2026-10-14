@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- Benchmark suites. Subclass `BenchmarkSuite`, implement `make_model()` and
+  `make_inputs(batch_size, make_tensor)`, and set `batch_sizes`, `dtypes` and `modes`
+  (`"eager"`, `"compile"`). Every combination runs as one test per device and measures:
+  - median and p90 latency, and throughput;
+  - peak memory (CUDA, XPU);
+  - compilation time in `"compile"` mode.
+
+  Each case is measured `rounds` times and the fastest round is kept. Cases are compared
+  with per-machine baselines (`--torch-update-perf`, `latency_tolerance`,
+  `memory_tolerance`). The run ends with a report table. Benchmarks run only with
+  `--torch-benchmark`; `--torch-benchmark-json` also writes the results. Dtypes the device
+  can't run, and `torch.compile` where it doesn't work, are skipped. See
+  `examples/test_benchmarks.py` and the benchmark in the image classification
+  integration example.
+- `compare_perf`: the baseline comparison of `check_perf`, for numbers you measured
+  yourself.
+- `LatencyStats.p90_ms`.
+
 ### Fixed
 
 - `check_inference_contract`:

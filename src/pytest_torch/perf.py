@@ -28,12 +28,13 @@ class LatencyStats:
     min_ms: float
     max_ms: float
     iters: int
+    p90_ms: float = 0.0
 
 
 def measure_latency(
     fn: Callable, *args, device: Any = "cpu", warmup: int = 5, iters: int = 20, **kwargs
 ) -> LatencyStats:
-    """Median/min/max wall time of ``fn(*args, **kwargs)`` with warmup and device sync."""
+    """Median/p90/min/max wall time of ``fn(*args, **kwargs)`` with warmup and device sync."""
     times = []
     with torch.inference_mode():
         for _ in range(warmup):
@@ -44,7 +45,9 @@ def measure_latency(
             fn(*args, **kwargs)
             sync(device)
             times.append((time.perf_counter() - start) * 1e3)
-    return LatencyStats(statistics.median(times), min(times), max(times), iters)
+    ordered = sorted(times)
+    p90 = ordered[min(len(ordered) - 1, round(0.9 * (len(ordered) - 1)))]
+    return LatencyStats(statistics.median(times), min(times), max(times), iters, p90)
 
 
 def measure_peak_memory(fn: Callable, *args, device: Any = "cpu", **kwargs) -> float | None:
@@ -144,15 +147,38 @@ def check_perf(
     """
     stats = measure_latency(fn, *args, device=device, warmup=warmup, iters=iters)
     peak = measure_peak_memory(fn, *args, device=device)
-    hardware = hardware_id(device)
+    return compare_perf(
+        store, key, hardware_id(device), stats.median_ms, peak, update=update, strict=strict,
+        latency_tolerance=latency_tolerance, latency_slack_ms=latency_slack_ms,
+        memory_tolerance=memory_tolerance, memory_slack_mb=memory_slack_mb,
+    )
+
+
+def compare_perf(
+    store: PerfStore,
+    key: str,
+    hardware: str,
+    latency_ms: float,
+    peak_memory_mb: float | None,
+    *,
+    update: bool = False,
+    strict: bool = False,
+    latency_tolerance: float = 0.25,
+    latency_slack_ms: float = 0.05,
+    memory_tolerance: float = 0.10,
+    memory_slack_mb: float = 1.0,
+) -> PerfResult:
+    """Compare measured numbers with the baseline for ``key`` on ``hardware`` (see
+    :func:`check_perf`), or record them with ``update=True``."""
     full_key = f"{key}|{hardware}"
-    result = PerfResult(stats.median_ms, peak)
+    result = PerfResult(latency_ms, peak_memory_mb)
+    peak = peak_memory_mb
 
     if update:
         store.set(
             full_key,
             {
-                "latency_ms": round(stats.median_ms, 4),
+                "latency_ms": round(latency_ms, 4),
                 "peak_memory_mb": None if peak is None else round(peak, 3),
                 "torch": torch.__version__,
             },
@@ -176,10 +202,10 @@ def check_perf(
     result.baseline_peak_memory_mb = base_memory
 
     problems = []
-    if stats.median_ms > base_latency * (1 + latency_tolerance) + latency_slack_ms:
-        change = f"+{(stats.median_ms / base_latency - 1) * 100:.0f}%" if base_latency > 0 else "n/a"
+    if latency_ms > base_latency * (1 + latency_tolerance) + latency_slack_ms:
+        change = f"+{(latency_ms / base_latency - 1) * 100:.0f}%" if base_latency > 0 else "n/a"
         problems.append(
-            f"latency regressed: {stats.median_ms:.3f} ms vs baseline {base_latency:.3f} ms "
+            f"latency regressed: {latency_ms:.3f} ms vs baseline {base_latency:.3f} ms "
             f"({change}; allowed +{latency_tolerance * 100:.0f}% and {latency_slack_ms:g} ms slack)"
         )
     if (
