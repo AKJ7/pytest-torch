@@ -128,11 +128,17 @@ def _clone_model(model: torch.nn.Module, *, device=None, dtype=None) -> torch.nn
 
 
 def _snapshot_state(model: torch.nn.Module) -> dict[str, torch.Tensor]:
-    return {
-        k: v.detach().clone()
-        for k, v in model.state_dict().items()
-        if isinstance(v, torch.Tensor)
-    }
+    """Copies of every registered parameter and buffer, non-persistent buffers included
+    (``state_dict()`` leaves those out). Plain Python attributes are not model state."""
+    state = {name: p.detach().clone() for name, p in model.named_parameters(remove_duplicate=False)}
+    state.update({name: b.detach().clone() for name, b in model.named_buffers(remove_duplicate=False)})
+    return state
+
+
+def _copy_output(output: Any) -> Any:
+    """Copy every tensor of an output: a model may return a buffer it overwrites in place
+    on the next call, which would make a changing output look deterministic."""
+    return tree_map(lambda t: t.detach().clone(), output)
 
 
 def _default_parity_devices(current: torch.device) -> list[str]:
@@ -194,14 +200,27 @@ def check_inference_contract(
     Checks (see ``CHECKS``): eval mode, finite outputs, determinism, batch
     invariance, device parity (vs ``devices``; default: the other available
     devices), dtype parity (only for ``dtypes``, e.g. ``(torch.bfloat16,)``), and
-    no parameter/buffer mutation. Use ``checks=`` / ``skip=`` to select.
+    no parameter/buffer mutation. Use ``checks=`` / ``skip=`` to select; selecting no
+    check at all is a ``ValueError``, raised before the model runs.
     Tolerances: ``rtol``/``atol`` for same-device checks (dtype defaults when
     ``None``), ``device_*`` and ``dtype_*`` for the parity checks.
+
+    The first output is copied right away, so a model returning a buffer it overwrites
+    on later calls can't pass the determinism check by aliasing. ``no_state_mutation``
+    covers every registered parameter and buffer, non-persistent buffers included, and
+    reports state added or removed during inference; plain Python attributes (counters,
+    caches stored as ordinary attributes) are outside its scope. ``eval_mode`` alone
+    doesn't run the model.
     """
     unknown = (set(checks or ()) | set(skip)) - set(CHECKS)
     if unknown:
         raise ValueError(f"unknown check(s) {sorted(unknown)}; choose from {CHECKS}")
     selected = [c for c in CHECKS if (checks is None or c in checks) and c not in skip]
+    if not selected:
+        raise ValueError(
+            f"no checks selected (checks={list(checks) if checks is not None else None}, skip={list(skip)}); "
+            f"choose from {CHECKS}"
+        )
 
     is_module = isinstance(model, torch.nn.Module)
     # The checks that need module methods only run when is_module (see _NEEDS_MODULE).
@@ -211,7 +230,11 @@ def check_inference_contract(
     dtype_rtol, dtype_atol = tolerances.for_check("dtype_parity", device, dtype_rtol, dtype_atol)
     inputs = to_device(inputs, device)
     snapshot = _snapshot_state(module) if is_module else {}
-    reference = _run(model, inputs)  # if the forward pass itself fails, let it raise
+    # Every check but eval_mode looks at outputs or at what a forward pass changed.
+    if any(name != "eval_mode" for name in selected):
+        reference = _copy_output(_run(model, inputs))  # if the forward pass fails, let it raise
+    else:
+        reference = None
 
     def eval_mode() -> None:
         training = [name or "<root>" for name, m in module.named_modules() if m.training]
@@ -289,17 +312,25 @@ def check_inference_contract(
             raise AssertionError("\n".join(failures))
 
     def no_state_mutation() -> None:
-        current = module.state_dict()
+        current = _snapshot_state(module)
+        added = sorted(set(current) - set(snapshot))
+        removed = sorted(set(snapshot) - set(current))
         changed = [
-            k
-            for k, before in snapshot.items()
-            if k not in current or not torch.equal(before, current[k])
+            k for k, before in snapshot.items()
+            if k in current and (before.shape != current[k].shape or not torch.equal(before, current[k]))
         ]
+        problems = []
         if changed:
-            raise AssertionError(
+            problems.append(
                 f"{len(changed)} parameter/buffer tensor(s) changed during inference "
                 f"(e.g. {', '.join(changed[:3])})"
             )
+        if added:
+            problems.append(f"added during inference: {', '.join(added[:5])}")
+        if removed:
+            problems.append(f"removed during inference: {', '.join(removed[:5])}")
+        if problems:
+            raise AssertionError("\n".join(problems))
 
     runners = {
         "eval_mode": eval_mode,

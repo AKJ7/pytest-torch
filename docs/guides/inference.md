@@ -52,8 +52,14 @@ Inference contract: 4 passed, 1 failed, 2 skipped
 
 `device_parity` compares against the other available devices; when `--torch-device` pins
 devices, only against the other pinned ones, so `--torch-device=cpu` never touches a GPU.
-Select checks with `checks=[...]` / `skip=[...]`; tune tolerances with `rtol`,
-`device_rtol`, `dtype_rtol`, ...
+Select checks with `checks=[...]` / `skip=[...]` (selecting none is an error, raised before
+the model runs); tune tolerances with `rtol`, `device_rtol`, `dtype_rtol`, ...
+
+`no_state_mutation` covers every registered parameter and buffer, non-persistent buffers
+included, and reports state added or removed during inference. Plain Python attributes,
+such as a call counter, are outside its scope. The first output is copied as soon as it's
+produced, so a model that returns a buffer it overwrites in place on later calls fails the
+determinism check instead of passing it.
 
 ## Find the first diverging layer
 

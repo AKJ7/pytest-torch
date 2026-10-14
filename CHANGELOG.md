@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `check_inference_contract`:
+  - copies the first output right away, so a model returning a buffer it overwrites in
+    place can't pass the determinism check by aliasing;
+  - checks every registered parameter and buffer for mutation, non-persistent buffers
+    included, and reports state added or removed during inference (plain Python
+    attributes stay outside the check);
+  - rejects an empty selection (`checks=[]`, or skipping every check) with a
+    `ValueError` before running the model, and doesn't run the model for `eval_mode`
+    alone.
+
 ## 1.0.0
 
 First stable release (the earlier `0.1.0.dev0` on PyPI was a preview). From here on,
