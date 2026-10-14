@@ -175,3 +175,15 @@ def test_seed_is_reported_for_failing_tests(pytester):
     result = pytester.runpytest("--torch-seed=42")
     result.assert_outcomes(failed=1)
     assert "torch seed: 42" in result.stdout.str()
+
+
+def test_nested_sessions_leave_the_outer_settings_alone(pytester):
+    # pytester.runpytest() (in-process) configures the plugin again; when the inner session
+    # ends, the outer one's pinned devices and tolerances must be back.
+    from pytest_torch import _session, tolerances
+
+    before = (_session.selected_devices, dict(tolerances._config))
+    pytester.makefile(".toml", pyproject='[tool.pytest_torch.tolerance]\nbfloat16 = { rtol = 0.5 }\n')
+    pytester.makepyfile("def test_inner():\n    pass\n")
+    pytester.runpytest("-p", "no:cacheprovider", "--torch-device=mps").assert_outcomes(passed=1)
+    assert (_session.selected_devices, dict(tolerances._config)) == before

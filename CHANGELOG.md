@@ -1,12 +1,33 @@
 # Changelog
 
-## 0.1.0
+## 1.0.0
 
-First public release. `pytest-torch` is a pytest plugin for testing PyTorch models. It
+First stable release (the earlier `0.1.0.dev0` on PyPI was a preview). From here on,
+pytest-torch follows [semantic versioning](https://semver.org/): see
+[Stability](#stability) below. `pytest-torch` is a pytest plugin for testing PyTorch models. It
 covers inference correctness, invariance, parity with deployment targets, training sanity,
 performance and determinism, and its failure messages say where a mismatch is and how large
 it is. It requires Python 3.9+, pytest 7+ and PyTorch 2.0+. The plugin registers itself
 when installed, and importing it never imports `torch`.
+
+### Test any model with no code
+
+```bash
+pytest --torch-model=hf:google-bert/bert-base-uncased
+pytest --torch-model=timm:resnet50 --torch-model=mypackage.models:Classifier
+```
+
+- **Model specs:** `hf:NAME[@AutoClass]`, `timm:NAME`, `torchvision:NAME`,
+  `package.module:Factory` or `path/to/file.py:Factory`. Weights are random by default
+  (Hugging Face models only download their config); `--torch-model-pretrained` loads
+  pretrained weights.
+- **Inferred inputs:** padded `input_ids`/`attention_mask` for text models, images of the
+  configured size for vision models, the model's `example_inputs()`, or the first layer's
+  shape. `--torch-model-inputs` describes them when inference can't.
+- **Checks:** the inference contract, padding/mask and layout invariance, a checkpoint
+  round-trip and finite gradients by default; `export` and `compile` on request with
+  `--torch-model-checks`. A model that can't be built fails once, in `test_builds`, with
+  the fix.
 
 ### A whole test suite from one class: `ModelSuite`
 
@@ -40,6 +61,11 @@ class TestClassifier(ModelSuite):
 - Generated tests are ordinary methods: you can override them or add your own.
 - Configuration mistakes (an unknown check, an unknown option, `training` without a
   `loss()` method) fail at collection with a message saying what to fix.
+- **One suite per config:** with `configs = sorted(Path("configs").glob("*.yaml"))`, every
+  generated test runs once per config file (YAML, JSON or Python objects), with
+  `config_overrides` to shrink each config and `self.config` / the `model_config` fixture
+  to build from it. Ids read `test_frozen[transformer_rope_frozen-cpu]`.
+- **`frozen` check:** parameters a config freezes must stay frozen through training.
 
 ### Fixtures and reproducibility
 
@@ -181,6 +207,7 @@ where `loss_fn(output)` returns a scalar.
 | `assert_loss_decreases` | A training loop that doesn't learn: zero learning rate, frozen parameters, an optimizer that never sees them |
 | `assert_overfits_one_batch` | A model that can't memorize one small batch, usually because of a bug |
 | `assert_gradcheck` | A custom `autograd.Function` whose backward disagrees with finite differences |
+| `assert_frozen` | "Frozen" parameters that still get gradients, move under weight decay, or update BatchNorm statistics |
 
 The checks that run optimizer steps train a copy, so the model you pass in is never
 modified. They return a `TrainingRun` with the loss curve.
@@ -317,7 +344,39 @@ These need the `hf`, `timm` and `torchvision` extras.
   recipes and an API reference. The README and `examples/test_start_here.py` show the same
   three paths.
 - **Examples:** runnable examples for every feature are in `examples/`. Most include a
-  "Try ..." comment showing a one-line bug that makes the test fail. Three integration
+  "Try ..." comment showing a one-line bug that makes the test fail. Four integration
   projects in `examples/integration/` (a transformer text classifier, an image classifier
-  with its deployment pipeline, and a small GPT with a KV cache) show the plugin on
+  with its deployment pipeline, a small GPT with a KV cache, and a navigation policy tested
+  once per YAML config) show the plugin on
   realistic code, laid out like real repositories.
+
+### Stability
+
+From 1.0, breaking changes to the public API only come with a new major version. The public
+API is:
+
+- the names exported from `pytest_torch` (`pytest_torch.__all__`) and
+  `pytest_torch.strategies`;
+- the fixtures, markers and command-line options the plugin registers;
+- the `[tool.pytest_torch.tolerance]` configuration and the baseline, golden-file and
+  reproduction-bundle formats.
+
+Modules and names starting with an underscore, and `pytest_torch.zero_code_tests`, are
+internal. Failure messages may be reworded in any release; match on their key phrases, not
+their full text.
+
+### Fixed before the stable release
+
+- `assert_batch_invariant` and the contract's batch-invariance check report a model that
+  can't run a single sample (for example BatchNorm left in training mode) as an assertion
+  that names the cause and suggests `model.eval()`, instead of letting torch's `ValueError`
+  through.
+- `torch.export`-based checks skip with a clear message on torch 2.0, where `torch.export`
+  doesn't exist yet, instead of reporting a misleading export failure.
+- `--torch-repro` and `--torch-model` detect file arguments on pytest 7.0 too.
+- A pytest session started in-process inside another (for example with `pytester`) no
+  longer leaves its settings behind: pinned devices, tolerances, reproduction and
+  `--torch-model` options are restored when it ends.
+- The test suite runs, and CI checks, at the advertised minimums (Python 3.9, torch 2.0,
+  pytest 7.0), passes `ruff` and `mypy`, and is isolated from the GPUs of the machine it
+  runs on.

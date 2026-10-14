@@ -11,9 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from . import report as _artifacts
-from . import repro as _repro
-from . import tolerances as _tolerances
+from . import report as _artifacts, repro as _repro, tolerances as _tolerances
 from .golden import Golden
 
 
@@ -121,6 +119,34 @@ def pytest_addoption(parser):
         action="store_true",
         help="Print GitHub Actions ::error annotations for failing tests.",
     )
+    # zero-code testing
+    group.addoption(
+        "--torch-model",
+        action="append",
+        dest="torch_models",
+        default=None,
+        metavar="SPEC",
+        help="Test a model with no test file (repeatable): hf:NAME[@AutoClass], timm:NAME, "
+        "torchvision:NAME, package.module:Factory or path/to/file.py:Factory.",
+    )
+    group.addoption(
+        "--torch-model-checks",
+        default=None,
+        help="Comma-separated checks for --torch-model: contract, invariance, checkpoint, "
+        "gradients (the default), export, compile.",
+    )
+    group.addoption(
+        "--torch-model-inputs",
+        default=None,
+        metavar="INPUTS",
+        help="Inputs for --torch-model when they can't be inferred: e.g. 4x3x32x32, or "
+        "input_ids=long:4x16:1000,attention_mask=mask:4x16.",
+    )
+    group.addoption(
+        "--torch-model-pretrained",
+        action="store_true",
+        help="Load pretrained weights for --torch-model (downloads them); default: random init.",
+    )
     # failure reproduction bundles
     group.addoption(
         "--torch-repro-dir",
@@ -168,7 +194,43 @@ class _GithubAnnotations:
             print(command)
 
 
+_SESSION_FIELDS = ("selected_devices", "model_specs", "model_checks", "model_inputs",
+                   "model_pretrained", "zero_code_only")
+
+
+def _save_global_state() -> dict:
+    """Module-level state this plugin sets per session. A nested session (pytester running
+    in-process) must not leave its settings behind for the outer one."""
+    from . import _session
+
+    return {
+        "session": {name: getattr(_session, name) for name in _SESSION_FIELDS},
+        "tolerances": dict(_tolerances._config),
+        "repro": dict(_repro._state),
+        "artifacts": dict(_artifacts._state),
+    }
+
+
+def _restore_global_state(saved: dict) -> None:
+    from . import _session
+
+    for name, value in saved["session"].items():
+        setattr(_session, name, value)
+    _tolerances.configure(saved["tolerances"])
+    _repro._state.clear()
+    _repro._state.update(saved["repro"])
+    _artifacts._state.clear()
+    _artifacts._state.update(saved["artifacts"])
+
+
+def pytest_unconfigure(config):
+    saved = getattr(config, "_pytest_torch_saved_state", None)
+    if saved is not None:
+        _restore_global_state(saved)
+
+
 def pytest_configure(config):
+    config._pytest_torch_saved_state = _save_global_state()
     from . import _session
 
     # Pinned devices also bound what library checks (e.g. the contract's device_parity) use.
@@ -186,6 +248,7 @@ def pytest_configure(config):
         config.addinivalue_line("markers", line)
     _configure_tolerances(config)
     _configure_repro(config)
+    _configure_zero_code(config)
     _artifacts.configure(config.getoption("torch_failure_artifacts"))
     # Workers forward their reports to the controller, which prints the annotations.
     if config.getoption("torch_github_annotations") and not hasattr(config, "workerinput"):
@@ -228,10 +291,60 @@ def _configure_repro(config) -> None:
         config.option.torch_devices = [bundle["params"]["torch_device"]]
 
 
+def _configure_zero_code(config) -> None:
+    from . import _session
+
+    specs = config.getoption("torch_models") or []
+    _session.model_specs = list(specs)
+    if not specs:
+        return
+    from . import zero_code_tests
+
+    requested = config.getoption("torch_model_checks")
+    checks = tuple(c.strip() for c in requested.split(",") if c.strip()) if requested else zero_code_tests.DEFAULT_CHECKS
+    unknown = sorted(set(checks) - set(zero_code_tests.CHECKS))
+    if unknown:
+        raise pytest.UsageError(f"--torch-model-checks: unknown {unknown}; choose from {list(zero_code_tests.CHECKS)}")
+    _session.model_checks = checks
+    _session.model_inputs = config.getoption("torch_model_inputs")
+    _session.model_pretrained = config.getoption("torch_model_pretrained")
+    # Without file arguments, run only the zero-code tests: regular collection is skipped
+    # (the rootdir and its pyproject.toml stay the project's).
+    _session.zero_code_only = _no_explicit_paths(config)
+
+
+def pytest_ignore_collect(collection_path, config):
+    from . import _session
+
+    return True if _session.zero_code_only else None
+
+
+def _zero_code_items(session) -> list:
+    """The zero-code test module, collected under the readable node id ``torch-model``."""
+    from . import zero_code_tests
+
+    module = pytest.Module.from_parent(session, path=Path(zero_code_tests.__file__), nodeid="torch-model")
+    items: list[pytest.Item] = []
+    pending: list = list(module.collect())
+    while pending:
+        node = pending.pop(0)
+        if isinstance(node, pytest.Item):
+            items.append(node)
+        else:
+            pending[:0] = node.collect()  # a class or other collector: expand in place
+    return items
+
+
 def _no_explicit_paths(config) -> bool:
-    """True when pytest was given no file/directory arguments (pytest >= 7.1 can tell)."""
+    """True when pytest was given no file/directory arguments."""
     explicit = getattr(getattr(type(config), "ArgsSource", None), "ARGS", None)
-    return explicit is not None and getattr(config, "args_source", explicit) != explicit
+    if explicit is not None:  # pytest >= 7.1 records where its arguments came from
+        return getattr(config, "args_source", explicit) != explicit
+    # pytest 7.0: look for a positional argument naming an existing file or directory.
+    return not any(
+        not arg.startswith("-") and Path(arg.split("::")[0]).exists()
+        for arg in config.invocation_params.args
+    )
 
 
 def _callspec_params(item) -> dict[str, str]:
@@ -248,6 +361,17 @@ def _matches_bundle(item, bundle: dict) -> bool:
 
 
 def pytest_collection_modifyitems(session, config, items):
+    from . import _session
+
+    if _session.model_specs:  # zero-code tests: test_builds and the selected checks
+        from . import zero_code_tests
+
+        selected = {"test_builds"} | {zero_code_tests.CHECKS[c] for c in _session.model_checks}
+        generated = _zero_code_items(session)
+        dropped = [i for i in generated if i.originalname not in selected]
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+        items.extend(i for i in generated if i.originalname in selected)
     bundle = _repro.replay_bundle()
     if bundle is None:
         return
@@ -292,6 +416,12 @@ def pytest_report_header(config):
     bundle = _repro.replay_bundle()
     if bundle is not None:
         lines += ["pytest-torch: " + line for line in _repro.describe(bundle)]
+    from . import _session
+
+    if _session.model_specs:
+        weights = "pretrained" if _session.model_pretrained else "random-init"
+        lines.append(f"pytest-torch: testing {', '.join(_session.model_specs)} ({weights}); "
+                     f"checks: {', '.join(_session.model_checks)}")
     return lines
 
 
@@ -394,6 +524,11 @@ def _dtypes(metafunc) -> list[str]:
 
 
 def pytest_generate_tests(metafunc):
+    configs = list(getattr(metafunc.cls, "configs", None) or ()) if metafunc.cls is not None else []
+    if "model_config" in metafunc.fixturenames and configs:
+        # first, so ids read [config-device]
+        metafunc.parametrize("model_config", configs, ids=[metafunc.cls.config_id(c) for c in configs],
+                             indirect=True)
     if "torch_device" in metafunc.fixturenames:
         metafunc.parametrize("torch_device", _devices(metafunc.config), indirect=True)
     if "torch_dtype" in metafunc.fixturenames:
@@ -432,6 +567,19 @@ def torch_dtype(request):
         if reason:
             pytest.skip(f"{request.param} is not supported on {device}: {reason}")
     return dtype
+
+
+@pytest.fixture
+def model_config(request):
+    """The current config of a ``ModelSuite`` (or any test class) with a ``configs``
+    attribute, loaded and with ``config_overrides`` applied; ``None`` without configs."""
+    if not hasattr(request, "param"):
+        return None
+    resolve = getattr(request.instance, "resolve_config", None)
+    config = resolve(request.param) if resolve is not None else request.param
+    if request.instance is not None:
+        request.instance.config = config  # self.config works in hand-written tests too
+    return config
 
 
 @pytest.fixture

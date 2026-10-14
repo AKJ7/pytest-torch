@@ -19,6 +19,10 @@
 | `--torch-update-metrics` | Record metric baselines (`metric_baseline`) instead of comparing |
 | `--torch-metrics-strict` | Fail (instead of skip) when a metric baseline is missing |
 | `--torch-metrics-file` | Metric baseline file (default `<rootdir>/.torch-metric-baselines.json`) |
+| `--torch-model=SPEC` | Test a model with no test file (repeatable): `hf:NAME[@AutoClass]`, `timm:NAME`, `torchvision:NAME`, `package.module:Factory`, `path/to/file.py:Factory` |
+| `--torch-model-checks` | Checks for `--torch-model`: `contract`, `invariance`, `checkpoint`, `gradients` (default), `export`, `compile` |
+| `--torch-model-inputs` | Inputs for `--torch-model` when they can't be inferred, e.g. `4x3x32x32` or `input_ids=long:4x16:1000,attention_mask=mask:4x16` |
+| `--torch-model-pretrained` | Load pretrained weights for `--torch-model` (default: random init) |
 | `--torch-repro-dir=DIR` | Write a reproduction bundle for every failing test |
 | `--torch-repro=BUNDLE` | Replay a bundle: only its test, same seed and inputs |
 | `--torch-repro-max-weights-mb` | Store weights passed to `record_repro` up to this size (default 0) |

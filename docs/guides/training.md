@@ -19,6 +19,7 @@ assert_all_params_receive_grad(model, x, loss_fn, ignore=["pooler.*"])
 assert_loss_decreases(model, x, loss_fn, steps=20)
 assert_overfits_one_batch(model, x, loss_fn, steps=200)
 assert_gradcheck(MyFunction.apply, small_x)
+assert_frozen(model, x, loss_fn, "encoder.*")       # frozen parts stay frozen through training steps
 ```
 
 ## What each check catches
@@ -46,6 +47,20 @@ an optimizer that never sees the parameters, and prints the loss curve.
 memorize one small batch has a bug: misaligned targets, too much regularization, a
 disconnected layer. Stops early once the loss reaches `max_final_ratio` (default 5%) of its
 initial value, or `target_loss`.
+
+**`assert_frozen`**: the parameters matching the patterns stay frozen through real
+optimizer steps (default AdamW with weight decay, over all parameters, like a typical
+training loop). It fails when a frozen parameter receives a gradient, when the optimizer
+changes it anyway (weight decay moves a parameter whose gradient is zero but not `None`),
+and when a buffer under the same names changes: a frozen encoder left in training mode
+still updates its BatchNorm statistics. Each failure comes with the fix.
+
+```
+3 problem(s) with frozen parameters ['visual_encoder.*']:
+  visual_encoder.net.1.running_mean: buffer changed during training
+  ...
+Hint: frozen modules with BatchNorm/running statistics must stay in eval mode (override train() to keep them in eval).
+```
 
 **`assert_gradcheck`**: compares autograd gradients with finite differences, in float64.
 Use it for custom `autograd.Function`s and hand-written backward passes. On failure it

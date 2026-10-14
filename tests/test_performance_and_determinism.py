@@ -4,7 +4,6 @@ Record baselines once per machine:   pytest examples/test_performance_and_determ
 Then every normal run compares against them (a missing baseline skips the test).
 """
 import pytest
-import torch
 from torch import nn
 
 from pytest_torch import (

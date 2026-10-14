@@ -59,7 +59,7 @@ def tree_map(fn: Callable[[torch.Tensor], Any], obj: Any) -> Any:
     if isinstance(obj, Mapping):
         mapped = {k: tree_map(fn, v) for k, v in obj.items()}
         try:
-            return type(obj)(mapped)
+            return type(obj)(mapped)  # type: ignore[call-arg]  # dict-like subclasses
         except Exception:
             return mapped
     if _is_namedtuple(obj):

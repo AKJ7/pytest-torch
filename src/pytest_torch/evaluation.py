@@ -156,10 +156,10 @@ def evaluate_detailed(
                         metric.update(output, batch)
                         continue
                     value = metric(output, batch)
-                    per_sample = isinstance(value, torch.Tensor) and value.dim() == 1
-                    if kinds.setdefault(name, per_sample) != per_sample:
+                    is_per_sample = isinstance(value, torch.Tensor) and value.dim() == 1
+                    if kinds.setdefault(name, is_per_sample) != is_per_sample:
                         raise ValueError(f"metric {name!r} returned per-sample values for some batches only")
-                    if per_sample:
+                    if is_per_sample:
                         if value.shape[0] != size:
                             raise ValueError(
                                 f"metric {name!r} returned {value.shape[0]} values for a batch of {size}"
@@ -175,7 +175,8 @@ def evaluate_detailed(
     if count == 0:
         raise ValueError("the loader produced no batches")
 
-    values, per_sample = {}, {}
+    values: dict[str, float] = {}
+    per_sample: dict[str, torch.Tensor] = {}
     for name, metric in metrics.items():
         if _is_stateful(metric):
             values[name] = float(metric.compute())
@@ -318,12 +319,12 @@ def paired_difference(
     diff = diff.double().cpu()
     n = diff.numel()
     generator = torch.Generator().manual_seed(seed)
-    means = []
+    chunks = []
     for start in range(0, resamples, 256):  # chunks keep memory at 256 * n indices
         k = min(256, resamples - start)
         idx = torch.randint(0, n, (k, n), generator=generator)
-        means.append(diff[idx].mean(dim=1))
-    means = torch.cat(means)
+        chunks.append(diff[idx].mean(dim=1))
+    means = torch.cat(chunks)
     alpha = (1 - confidence) / 2
     low, high = torch.quantile(means, torch.tensor([alpha, 1 - alpha], dtype=torch.float64)).tolist()
     return PairedDifference(float(diff.mean()), low, high, confidence, n)

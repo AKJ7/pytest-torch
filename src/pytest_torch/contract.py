@@ -8,8 +8,9 @@ runs a battery of checks that every inference model should satisfy and reports
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, cast
 
 import torch
 
@@ -203,15 +204,17 @@ def check_inference_contract(
     selected = [c for c in CHECKS if (checks is None or c in checks) and c not in skip]
 
     is_module = isinstance(model, torch.nn.Module)
+    # The checks that need module methods only run when is_module (see _NEEDS_MODULE).
+    module = cast(torch.nn.Module, model)
     device = model_device(model)
     device_rtol, device_atol = tolerances.for_check("device_parity", device, device_rtol, device_atol)
     dtype_rtol, dtype_atol = tolerances.for_check("dtype_parity", device, dtype_rtol, dtype_atol)
     inputs = to_device(inputs, device)
-    snapshot = _snapshot_state(model) if is_module else {}
+    snapshot = _snapshot_state(module) if is_module else {}
     reference = _run(model, inputs)  # if the forward pass itself fails, let it raise
 
     def eval_mode() -> None:
-        training = [name or "<root>" for name, m in model.named_modules() if m.training]
+        training = [name or "<root>" for name, m in module.named_modules() if m.training]
         if training:
             raise AssertionError(
                 f"{len(training)} module(s) in training mode (e.g. {', '.join(training[:3])})"
@@ -229,7 +232,7 @@ def check_inference_contract(
                 model, inputs, batched=reference, rtol=rtol, atol=atol
             )
         except BatchInvarianceNotApplicable as exc:
-            raise _Skip(str(exc))
+            raise _Skip(str(exc)) from None
         if problems:
             raise AssertionError(
                 format_problems("per-sample results differ from the batched run", problems)
@@ -245,7 +248,7 @@ def check_inference_contract(
         failures = []
         ref_cpu = dict(flatten(_to_cpu(reference)))
         for target in targets:
-            clone = _clone_model(model, device=target)
+            clone = _clone_model(module, device=target)
             out = _run(clone, to_device(inputs, target))
             problems = leaves_diff(
                 dict(flatten(_to_cpu(out))),
@@ -272,7 +275,7 @@ def check_inference_contract(
         failures = []
         ref32 = dict(flatten(as_f32(_to_cpu(reference))))
         for dtype in dtypes:
-            clone = _clone_model(model, dtype=dtype)
+            clone = _clone_model(module, dtype=dtype)
             out = _run(clone, cast_floating(inputs, dtype))
             problems = leaves_diff(
                 dict(flatten(as_f32(_to_cpu(out)))),
@@ -286,7 +289,7 @@ def check_inference_contract(
             raise AssertionError("\n".join(failures))
 
     def no_state_mutation() -> None:
-        current = model.state_dict()
+        current = module.state_dict()
         changed = [
             k
             for k, before in snapshot.items()

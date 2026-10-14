@@ -198,7 +198,8 @@ def assert_checkpoint_loads(
         problems += [f"unexpected in checkpoint: {k}" for k in unexpected]
     if problems:
         hint = ""
-        common = os.path.commonprefix(unexpected) if unexpected else ""
+        # Character-wise on purpose: the hint applies only when the prefix ends at a dot.
+        common = os.path.commonprefix(unexpected) if unexpected else ""  # noqa: RUF071
         if common.endswith(".") and all(k[len(common):] in expected for k in unexpected):
             hint = f"\nHint: every unexpected key starts with {common!r}: pass strip_prefix={common!r}."
         raise AssertionError(

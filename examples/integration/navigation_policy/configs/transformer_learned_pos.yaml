@@ -1,0 +1,21 @@
+habitat:
+  task:
+    num_object_categories: 6
+  environment:
+    max_episode_steps: 512
+habitat_baselines:
+  num_environments: 16
+  rl:
+    policy:
+      main_agent:
+        name: TransformerNavPolicy
+        action_distribution_type: gaussian
+        transformer_config:
+          n_layers: 2
+          n_heads: 4
+          pos_emb: learned
+    ddppo:
+      backbone: small_cnn
+      rnn_type: transformer
+      hidden_size: 128
+      train_encoder: true

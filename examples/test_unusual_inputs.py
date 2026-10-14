@@ -44,9 +44,9 @@ class MeanPoolEncoder(nn.Module):
 
 
 hypothesis = pytest.importorskip("hypothesis")
-from hypothesis import given, settings  # noqa: E402
+from hypothesis import given, settings
 
-from pytest_torch.strategies import padded_batches, tensors  # noqa: E402
+from pytest_torch.strategies import padded_batches, tensors
 
 torch.manual_seed(0)
 ENCODER = MeanPoolEncoder().eval()  # module scope: Hypothesis rejects function-scoped fixtures

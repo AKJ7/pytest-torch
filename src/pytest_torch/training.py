@@ -9,8 +9,9 @@ from __future__ import annotations
 import copy
 import fnmatch
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 import torch
 
@@ -103,6 +104,76 @@ def assert_all_params_receive_grad(
             )
             + "\nHint: unused layers, .detach()/.item() in forward, or a loss that ignores an "
             "output. Freeze intentionally unused parameters (requires_grad=False) or pass ignore=."
+        )
+
+
+def assert_frozen(
+    model,
+    inputs: Any,
+    loss_fn: LossFn,
+    params: str | Sequence[str],
+    *,
+    optimizer: Callable | None = None,
+    steps: int = 1,
+    check_buffers: bool = True,
+) -> None:
+    """Assert the parameters matching ``params`` stay frozen through real training steps.
+
+    ``params`` are fnmatch patterns of parameter names, e.g. ``"encoder.*"``. A deep copy
+    of the model is trained in training mode for ``steps`` steps with ``optimizer`` (a
+    ``fn(params) -> Optimizer``; default AdamW with weight decay, over *all* parameters like
+    a typical training loop). Fails when a frozen parameter receives a gradient, is changed
+    by the optimizer (e.g. weight decay on a zero gradient), or, with ``check_buffers``,
+    when a buffer under the same names changes: a frozen BatchNorm left in training mode
+    still updates its running statistics. The model you pass is never modified.
+    """
+    patterns = [params] if isinstance(params, str) else list(params)
+    trainee = copy.deepcopy(model).train()
+    named_params = dict(trainee.named_parameters())
+    frozen = {n: p for n, p in named_params.items() if _ignored(n, patterns)}
+    buffers = {n: b for n, b in trainee.named_buffers() if _ignored(n, patterns)} if check_buffers else {}
+    if not frozen and not buffers:
+        raise ValueError(
+            f"no parameter or buffer matches {patterns}; names look like {list(named_params)[:5]}"
+        )
+    before = {n: t.detach().clone() for n, t in {**frozen, **buffers}.items()}
+    opt = (optimizer(trainee.parameters()) if optimizer is not None
+           else torch.optim.AdamW(trainee.parameters(), lr=1e-3, weight_decay=0.01))
+    inputs = to_device(inputs, model_device(trainee))
+    problems = []
+    for step in range(steps):
+        opt.zero_grad(set_to_none=True)
+        _loss(trainee, inputs, loss_fn).backward()
+        for name, param in frozen.items():
+            if param.grad is not None and bool(param.grad.any()):
+                problems.append(
+                    f"{name}: received a gradient at step {step + 1} "
+                    f"(max |grad| {float(param.grad.abs().max()):.3g})"
+                )
+        opt.step()
+    for name in frozen:
+        if not torch.equal(frozen[name].detach(), before[name]):
+            problems.append(
+                f"{name}: changed by the optimizer "
+                f"(max change {float((frozen[name].detach() - before[name]).abs().max()):.3g})"
+            )
+    for name in buffers:
+        if not torch.equal(buffers[name], before[name]):
+            problems.append(f"{name}: buffer changed during training")
+    if problems:
+        hints = []
+        if any("buffer changed" in p for p in problems):
+            hints.append("frozen modules with BatchNorm/running statistics must stay in eval mode "
+                         "(override train() to keep them in eval)")
+        if any("received a gradient" in p for p in problems):
+            hints.append("set requires_grad_(False) on the frozen parameters, or run the frozen part "
+                         "under torch.no_grad()")
+        if any("changed by the optimizer" in p for p in problems):
+            hints.append("leave frozen parameters out of the optimizer, or keep their grad None "
+                         "(weight decay moves parameters even with a zero gradient)")
+        raise AssertionError(
+            format_problems(f"{len(problems)} problem(s) with frozen parameters {patterns}:", problems)
+            + "".join(f"\nHint: {h}." for h in dict.fromkeys(hints))
         )
 
 

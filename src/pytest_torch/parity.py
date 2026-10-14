@@ -6,6 +6,7 @@ import os
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import torch
@@ -141,7 +142,7 @@ def assert_onnx_parity(
     kwargs.update(export_kwargs or {})
 
     with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "model.onnx")
+        path = str(Path(tmp) / "model.onnx")
         with torch.no_grad():
             torch.onnx.export(cpu_model, args, path, **kwargs)
         session = ort.InferenceSession(path, providers=list(providers))
@@ -204,7 +205,15 @@ def _batch_dynamic_shapes(args: tuple, kwargs: dict) -> Any:
     return spec(kwargs) if kwargs else spec(args)
 
 
+def _require_export() -> None:
+    if getattr(getattr(torch, "export", None), "export", None) is None:
+        import pytest
+
+        pytest.skip(f"torch.export needs torch >= 2.1 (this is {torch.__version__})")
+
+
 def _export(model, inputs: Any, *, dynamic_shapes, dynamic_batch: bool, strict: bool | None):
+    _require_export()
     if dynamic_batch and dynamic_shapes is not None:
         raise ValueError("pass either dynamic_batch=True or dynamic_shapes, not both")
     args, kwargs = _args_kwargs(inputs)
@@ -337,7 +346,7 @@ def assert_aoti_parity(
     with tempfile.TemporaryDirectory() as tmp:
         path = inductor.aoti_compile_and_package(
             program,
-            package_path=os.path.join(tmp, "model.pt2"),
+            package_path=str(Path(tmp) / "model.pt2"),
             inductor_configs=dict(inductor_configs or {}),
         )
         runner = inductor.aoti_load_package(path)

@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from typing import BinaryIO, Callable
 
 if sys.platform == "win32":
     import msvcrt
@@ -86,11 +86,11 @@ class FileLock:
         self.path = Path(path)
         self.timeout = timeout
         self.poll = poll
-        self._handle = None
+        self._handle: BinaryIO | None = None
 
     def acquire(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(self.path, "a+b")
+        handle = self.path.open("a+b")
         deadline = time.monotonic() + self.timeout
         while True:
             try:
@@ -113,7 +113,7 @@ class FileLock:
                 self._handle.close()
                 self._handle = None
 
-    def __enter__(self) -> "FileLock":
+    def __enter__(self) -> FileLock:
         self.acquire()
         return self
 

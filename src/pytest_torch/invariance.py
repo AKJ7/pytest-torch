@@ -253,8 +253,8 @@ def assert_mask_invariant(
             return leaf[keep]
         return leaf
 
-    expected = {p: select(l) for p, l in flatten(run_inference(model, inputs))}
-    actual = {p: select(l) for p, l in flatten(run_inference(model, changed))}
+    expected = {path: select(leaf) for path, leaf in flatten(run_inference(model, inputs))}
+    actual = {path: select(leaf) for path, leaf in flatten(run_inference(model, changed))}
     _check(actual, expected, "Mask invariance violated (masked tokens leak)", rtol=rtol, atol=atol)
 
 

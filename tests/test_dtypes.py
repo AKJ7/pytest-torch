@@ -40,7 +40,10 @@ def test_marker_and_default(pytester):
 def test_command_line_dtypes(pytester):
     result = run(pytester, "--torch-dtype=float16", "--torch-dtype=float64", "-k", "default")
     result.stdout.fnmatch_lines(["*test_default[[]cpu-float16[]]*", "*test_default[[]cpu-float64[]]*"])
-    result.assert_outcomes(failed=2)  # test_default asserts float32
+    # test_default asserts float32, so both fail, unless the device can't run the dtype at
+    # all (float16 matmul on CPU before torch 2.1): then that one is skipped.
+    outcomes = result.parseoutcomes()
+    assert outcomes.get("failed", 0) + outcomes.get("skipped", 0) == 2 and outcomes.get("failed", 0) >= 1
 
 
 def test_unknown_dtype_is_a_usage_error(pytester):

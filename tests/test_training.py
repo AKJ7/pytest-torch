@@ -6,6 +6,7 @@ from torch.nn import functional as F
 
 from pytest_torch import (
     assert_all_params_receive_grad,
+    assert_frozen,
     assert_gradcheck,
     assert_gradients_finite,
     assert_loss_decreases,
@@ -181,3 +182,67 @@ def test_too_weak_model_cannot_overfit(data):
         assert_overfits_one_batch(
             tiny, torch.zeros_like(x), lambda out: F.mse_loss(out, random_targets), steps=30
         )
+
+
+# --------------------------------------------------------------------------- #
+# frozen parameters
+# --------------------------------------------------------------------------- #
+class EncoderHead(nn.Module):
+    def __init__(self, freeze="correct"):
+        super().__init__()
+        torch.manual_seed(0)
+        self.encoder = nn.Sequential(nn.Linear(8, 16), nn.BatchNorm1d(16), nn.ReLU())
+        self.head = nn.Linear(16, 3)
+        self.freeze = freeze
+        if freeze in ("correct", "bn_in_train_mode"):
+            self.encoder.requires_grad_(False)
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.freeze == "correct":
+            self.encoder.eval()
+        return self
+
+    def forward(self, x):
+        if self.freeze == "zero_gradient":
+            # "Frozen" by cutting the encoder's influence: its gradient is all zeros, but it
+            # exists, so AdamW's weight decay still moves the weights.
+            return self.head(self.encoder(x) * 0.0 + 1.0)
+        return self.head(self.encoder(x))
+
+
+def test_correctly_frozen_encoder_passes(data):
+    x, y = data
+    model = EncoderHead()
+    before = {k: v.clone() for k, v in model.state_dict().items()}
+    assert_frozen(model, x, ce(y), "encoder.*", steps=3)
+    assert all(torch.equal(before[k], v) for k, v in model.state_dict().items())  # untouched
+
+
+def test_frozen_batchnorm_in_train_mode_is_caught(data):
+    x, y = data
+    with pytest.raises(AssertionError, match=r"(?s)encoder\.1\.running_mean: buffer changed.*stay in eval mode"):
+        assert_frozen(EncoderHead("bn_in_train_mode"), x, ce(y), "encoder.*")
+    assert_frozen(EncoderHead("bn_in_train_mode"), x, ce(y), "encoder.*", check_buffers=False)
+
+
+def test_unfrozen_parameters_are_caught(data):
+    x, y = data
+    with pytest.raises(AssertionError, match=r"(?s)encoder\.0\.weight: received a gradient.*changed by the optimizer"):
+        assert_frozen(EncoderHead("not_frozen"), x, ce(y), ["encoder.0.*"])
+
+
+def test_weight_decay_on_a_zero_gradient_is_caught(data):
+    x, y = data
+    model = EncoderHead("zero_gradient")
+    with pytest.raises(AssertionError) as info:
+        assert_frozen(model, x, ce(y), "encoder.0.weight", check_buffers=False)
+    message = str(info.value)
+    assert "changed by the optimizer" in message and "received a gradient" not in message
+    assert "weight decay moves parameters even with a zero gradient" in message
+
+
+def test_frozen_patterns_must_match_something(data):
+    x, y = data
+    with pytest.raises(ValueError, match=r"no parameter or buffer matches \['backbone\.\*'\]"):
+        assert_frozen(EncoderHead(), x, ce(y), "backbone.*")

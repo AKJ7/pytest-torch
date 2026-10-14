@@ -5,7 +5,6 @@ torch = pytest.importorskip("torch")
 from pytest_torch import assert_batch_invariant, assert_finite, assert_tensors_close
 
 
-
 def test_close_passes():
     a = torch.tensor([1.0, 2.0, 3.0])
     assert_tensors_close(a, a + 1e-8)
@@ -49,5 +48,6 @@ def test_batch_invariance_fails_in_train_mode():
     torch.manual_seed(0)
     net = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.BatchNorm1d(4))
     net.train()  # BatchNorm uses batch statistics -> output depends on batch
-    with pytest.raises(Exception):
+    # Train-mode BatchNorm can't even run one sample: a clear assertion, not torch's ValueError.
+    with pytest.raises(AssertionError, match=r"fails on a single sample: ValueError.*training mode.*call model\.eval\(\)"):
         assert_batch_invariant(net, torch.randn(8, 4))

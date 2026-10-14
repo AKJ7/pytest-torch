@@ -1,0 +1,17 @@
+habitat:
+  task:
+    num_object_categories: 6
+  environment:
+    max_episode_steps: 512
+habitat_baselines:
+  num_environments: 16
+  rl:
+    policy:
+      main_agent:
+        name: GRUNavPolicy
+        action_distribution_type: gaussian
+    ddppo:
+      backbone: small_cnn
+      rnn_type: gru
+      hidden_size: 128
+      train_encoder: true

@@ -59,5 +59,6 @@ Face `ModelOutput`s.
   them carry a "Try ..." comment: a one-line bug that makes the test fail.
 - See it on realistic projects:
   [`examples/integration/`](https://github.com/AKJ7/pytest-torch/tree/main/examples/integration)
-  has a transformer text classifier, an image classifier with its deployment pipeline, and a
-  small GPT with a KV cache, each laid out like a real repository and tested end to end.
+  has a transformer text classifier, an image classifier with its deployment pipeline, a
+  small GPT with a KV cache, and a navigation policy tested once per YAML config, each laid
+  out like a real repository and tested end to end.
