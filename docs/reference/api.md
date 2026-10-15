@@ -142,3 +142,7 @@ Everything below is importable from `pytest_torch` directly, e.g.
       members: [available_devices]
 
 ::: pytest_torch.integrations.ModelLoader
+
+::: pytest_torch.integrations.shrink_config
+
+::: pytest_torch.data.BatchFactory

@@ -29,6 +29,23 @@ Intel XPU.
 To benchmark a model over batch sizes, dtypes and `torch.compile`, with an end-of-run
 report, see [Benchmark suites](benchmarks.md).
 
+## Memory budgets and leaks
+
+```python
+@pytest.mark.torch_max_memory(mb=512)       # peak memory of the test body (CUDA, XPU)
+def test_inference_fits(model, make_tensor):
+    model(make_tensor(64, 3, 224, 224))
+
+
+@pytest.mark.torch_memory_leak(iterations=5)  # fails when every run leaves more behind
+def test_training_step_does_not_leak(model, batch):
+    train_step(model, batch)
+```
+
+The leak check names the tensors that accumulate and, when they hold an autograd graph,
+says to store `loss.item()` instead of `loss`. See
+[`torch_max_memory` and `torch_memory_leak`](../reference/markers.md#speed-and-memory).
+
 ## Host-device syncs
 
 ```python
@@ -61,6 +78,11 @@ pytest -n 4 --torch-xdist-gpus=0,1 --torch-gpu-memory-fraction=auto
   (or `"xpu"`) to the worker's `cuda:N` (`xpu:N`) while test ids stay identical.
 - `--torch-gpu-memory-fraction=auto` splits each GPU's memory between the workers sharing it.
 - `@pytest.mark.torch_gpu_exclusive` serializes heavy tests per GPU across workers.
+- Each worker uses its share of the CPU cores (`--torch-num-threads=auto`, the default):
+  4 workers on 16 cores get 4 threads each. Without this, every worker starts one thread per
+  core, and the oversubscribed machine can slow tests down by orders of magnitude. Set
+  `OMP_NUM_THREADS` or `--torch-num-threads=N` to choose, `none` to keep torch's default;
+  `@pytest.mark.torch_threads(1)` pins one test.
 - Record performance baselines without parallel workers: timings taken while other workers
   share the machine are not a fair reference.
 

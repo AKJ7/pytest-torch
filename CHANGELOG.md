@@ -45,6 +45,33 @@
   - Tolerance checks `training_resume` and `grad_accumulation`.
 
   See `examples/test_training_loops.py`.
+- `make_batch` fixture: realistic synthetic batches drawn through `make_tensor` (seeded,
+  on `torch_device`, recorded in reproduction bundles). `tokens()` gives `input_ids` and
+  `attention_mask` for rows of mixed lengths (always one full row and one padded row,
+  padding left or right, real tokens never equal to the pad id, optional class or
+  language-modeling labels); `images()` gives normalized or raw `uint8` images in NCHW or
+  NHWC; `loader()` gives a `DataLoader` shuffled by the test's seed.
+- `model_loader.hf_tiny(name)`: a small, randomly initialized model with the architecture of
+  a Hugging Face model, from its config alone, with weights fixed by a seed. `shrink_config`
+  does the shrinking (layers, widths, attention and key/value heads, feed-forward sizes,
+  experts, per-layer lists, nested configs). `--torch-model=hf-tiny:NAME` uses it for
+  zero-code testing.
+- `--torch-num-threads` (default `auto`): under pytest-xdist, each worker uses its share of
+  the CPU cores instead of one thread per core, unless `OMP_NUM_THREADS` is set. An integer
+  sets the count everywhere; `@pytest.mark.torch_threads(n)` sets it for one test.
+- Markers:
+  - `torch_requires(...)`: skip unless devices (`cuda`, `xpu`, `mps`, `gpu`), versions
+    (`torch`, `python` specifiers), `compile`, `gpu_memory_gb`, `cuda_capability` and
+    `packages` are available, with the reason at the test's location.
+  - `torch_skip_on(*devices)` and `torch_xfail_on(*devices)`: skip or expect a failure
+    for one device (and optionally dtype) only. Expected failures are strict and take
+    `raises=`.
+  - `torch_deterministic`, `torch_default_dtype(dtype)`, `torch_matmul_precision(...)`
+    (`"highest"` disables TF32, convolutions included), `torch_no_host_sync`,
+    `torch_detect_anomaly`: set for one test, fixtures included, and restored afterwards.
+  - `torch_max_memory(mb=)`: peak memory budget of the test body (CUDA, XPU).
+  - `torch_memory_leak(iterations=5)`: runs the body repeatedly and fails when every run
+    leaves more tensors or memory behind, describing the new tensors and their holders.
 - `TrainingRun` gained `records`, `setup` and the assertions above; `assert_loss_decreases`
   and `assert_overfits_one_batch` return it as before.
 

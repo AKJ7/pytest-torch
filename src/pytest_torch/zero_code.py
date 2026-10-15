@@ -1,6 +1,7 @@
 """Zero-code testing: turn a model spec into a model factory and example inputs.
 
     pytest --torch-model=hf:bert-base-uncased
+    pytest --torch-model=hf-tiny:Qwen/Qwen2.5-7B    # the architecture, shrunk: seconds on CPU
     pytest --torch-model=timm:resnet50 --torch-model=torchvision:mobilenet_v3_small
     pytest --torch-model=mypackage.models:Classifier
     pytest --torch-model=path/to/models.py:build_model --torch-model-inputs=4x3x32x32
@@ -217,8 +218,12 @@ def _need(module: str, extra: str):
         raise SpecError(f"{module} is not installed: pip install 'pytest-torch[{extra}]'") from None
 
 
-def _hf(name: str, pretrained: bool, inputs_override: InputPlan | None) -> ModelUnderTest:
+def _hf(name: str, pretrained: bool, inputs_override: InputPlan | None, tiny: bool = False) -> ModelUnderTest:
     transformers = _need("transformers", "hf")
+    scheme = "hf-tiny" if tiny else "hf"
+    if tiny and pretrained:
+        raise SpecError("hf-tiny models are shrunk and randomly initialized: drop --torch-model-pretrained "
+                        "or use hf: instead")
     name, _, auto_class = name.partition("@")
     auto = getattr(transformers, auto_class or "AutoModel", None)
     if auto is None:
@@ -227,13 +232,17 @@ def _hf(name: str, pretrained: bool, inputs_override: InputPlan | None) -> Model
         config = transformers.AutoConfig.from_pretrained(name)
     except Exception as exc:  # offline, unknown name, private repo, ...
         raise SpecError(f"can't load the Hugging Face config for {name!r}: {str(exc).splitlines()[0]}") from None
+    if tiny:
+        from .integrations import shrink_config
+
+        shrink_config(config)
 
     def build() -> nn.Module:
         model = auto.from_pretrained(name) if pretrained else auto.from_config(config)
         return model.eval()
 
     if inputs_override is not None:
-        return ModelUnderTest(f"hf:{name}", build, inputs_override)
+        return ModelUnderTest(f"{scheme}:{name}", build, inputs_override)
     params = inspect.signature(build().forward).parameters
     vocab = getattr(config, "vocab_size", None)
     if "input_ids" in params and vocab:
@@ -245,11 +254,11 @@ def _hf(name: str, pretrained: bool, inputs_override: InputPlan | None) -> Model
         if "use_cache" in params:
             # The attention cache isn't the model's answer, and its length follows the input.
             extra["use_cache"] = lambda _g: False
-        return ModelUnderTest(f"hf:{name}", build, text_plan(vocab, length, extra=extra))
+        return ModelUnderTest(f"{scheme}:{name}", build, text_plan(vocab, length, extra=extra))
     if "pixel_values" in params:
         size = getattr(config, "image_size", 224)
         height, width = (size, size) if isinstance(size, int) else tuple(size)
-        return ModelUnderTest(f"hf:{name}", build, vision_plan(getattr(config, "num_channels", 3), height, width, "pixel_values"))
+        return ModelUnderTest(f"{scheme}:{name}", build, vision_plan(getattr(config, "num_channels", 3), height, width, "pixel_values"))
     raise SpecError(
         f"can't infer inputs for {name!r} (forward takes {list(params)[:6]}); pass --torch-model-inputs"
     )
@@ -333,8 +342,8 @@ def resolve(spec: str, *, pretrained: bool = False, inputs: str | None = None) -
     """Resolve a ``--torch-model`` spec; raises :class:`SpecError` with a fix on failure."""
     override = parse_input_spec(inputs) if inputs else None
     scheme, _, rest = spec.partition(":")
-    if scheme == "hf" and rest:
-        subject = _hf(rest, pretrained, override)
+    if scheme in ("hf", "hf-tiny") and rest:
+        subject = _hf(rest, pretrained, override, tiny=scheme == "hf-tiny")
     elif scheme == "timm" and rest:
         subject = _timm(rest, pretrained, override)
     elif scheme == "torchvision" and rest:

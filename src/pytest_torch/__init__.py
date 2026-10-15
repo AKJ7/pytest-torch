@@ -63,6 +63,9 @@ _EXPORTS = {
     "StepRecord": "training",
     # training loops
     "TrainingSetup": "training_loop",
+    # synthetic data and tiny models
+    "BatchFactory": "data",
+    "shrink_config": "integrations",
     "TrainingRunner": "training_loop",
     "run_training": "training_loop",
     "standard_step": "training_loop",
@@ -145,10 +148,11 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .checkpoint import assert_checkpoint_loads, assert_checkpoint_roundtrip
     from .compilation import assert_no_graph_breaks, assert_no_recompiles
     from .contract import CheckResult, ContractReport, check_inference_contract
+    from .data import BatchFactory
     from .devices import available_devices
     from .divergence import DivergenceReport, LayerDiff, localize_divergence
     from .evaluation import MetricResult, evaluate, evaluate_detailed, paired_difference
-    from .integrations import ModelLoader
+    from .integrations import ModelLoader, shrink_config
     from .invariance import (
         assert_equivariant,
         assert_invariant,

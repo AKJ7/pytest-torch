@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from . import report as _artifacts, repro as _repro, tolerances as _tolerances
+from . import markers as _markers, report as _artifacts, repro as _repro, tolerances as _tolerances
 from .golden import Golden
 
 
@@ -115,6 +115,13 @@ def pytest_addoption(parser):
         "'none', or a comma-separated list such as 0,1.",
     )
     group.addoption(
+        "--torch-num-threads",
+        default="auto",
+        help="CPU threads per test process: an integer, 'none' (torch's default), or 'auto': "
+        "under pytest-xdist, the CPU cores divided between the workers (unless OMP_NUM_THREADS "
+        "is set); otherwise torch's default.",
+    )
+    group.addoption(
         "--torch-gpu-memory-fraction",
         default="none",
         help="Per-process CUDA memory cap under xdist: 'none', 'auto' (split each GPU "
@@ -139,7 +146,7 @@ def pytest_addoption(parser):
         dest="torch_models",
         default=None,
         metavar="SPEC",
-        help="Test a model with no test file (repeatable): hf:NAME[@AutoClass], timm:NAME, "
+        help="Test a model with no test file (repeatable): hf:NAME[@AutoClass], hf-tiny:NAME, timm:NAME, "
         "torchvision:NAME, package.module:Factory or path/to/file.py:Factory.",
     )
     group.addoption(
@@ -248,6 +255,11 @@ def pytest_unconfigure(config):
     saved = getattr(config, "_pytest_torch_saved_state", None)
     if saved is not None:
         _restore_global_state(saved)
+    threads = getattr(config, "_pytest_torch_previous_threads", None)
+    if threads is not None:
+        import torch
+
+        torch.set_num_threads(threads)
 
 
 def pytest_configure(config):
@@ -266,8 +278,11 @@ def pytest_configure(config):
         "[tool.pytest_torch.tolerance], e.g. bfloat16=(2e-2, 1e-2)",
         "torch_dtypes(*dtypes): dtypes the `torch_dtype` fixture runs this test with",
         "torch_benchmark: a benchmark; runs only with --torch-benchmark",
+        "torch_threads(n): number of CPU threads torch uses during this test",
+        *_markers.LINES,
     ):
         config.addinivalue_line("markers", line)
+    _configure_threads(config)
     _configure_tolerances(config)
     _configure_repro(config)
     _configure_zero_code(config)
@@ -275,6 +290,81 @@ def pytest_configure(config):
     # Workers forward their reports to the controller, which prints the annotations.
     if config.getoption("torch_github_annotations") and not hasattr(config, "workerinput"):
         config.pluginmanager.register(_GithubAnnotations(config), "torch-github-annotations")
+
+
+def _cpu_count() -> int:
+    import os
+
+    try:
+        return len(os.sched_getaffinity(0))  # the cores this process may use (containers, taskset)
+    except (AttributeError, OSError):
+        return os.cpu_count() or 1
+
+
+def _thread_count(value: str) -> int | None:
+    """Threads for ``--torch-num-threads``; ``None`` leaves torch's default."""
+    import os
+
+    from .parallel import worker_count, worker_index
+
+    if value == "none":
+        return None
+    if value == "auto":
+        if worker_index() is None or worker_count() < 2 or "OMP_NUM_THREADS" in os.environ:
+            return None
+        return max(1, _cpu_count() // worker_count())
+    try:
+        threads = int(value)
+    except ValueError:
+        threads = 0
+    if threads < 1:
+        raise pytest.UsageError(f"--torch-num-threads must be a positive integer, 'auto' or 'none', got {value!r}")
+    return threads
+
+
+def _configure_threads(config) -> None:
+    threads = _thread_count(config.getoption("torch_num_threads"))
+    if threads is None:
+        return
+    import os
+
+    import torch
+
+    config._pytest_torch_previous_threads = torch.get_num_threads()
+    torch.set_num_threads(threads)
+    os.environ["OMP_NUM_THREADS"] = str(threads)  # subprocesses (pytester, compile workers)
+    config._pytest_torch_threads = threads
+
+
+@pytest.fixture(autouse=True)
+def _torch_mode_markers(request):
+    if not any(request.node.get_closest_marker(name) for name in _markers.MODE_MARKERS):
+        yield
+        return
+    import contextlib
+
+    with contextlib.ExitStack() as stack:
+        _markers.mode_contexts(request, stack)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _torch_threads_marker(request):
+    marker = request.node.get_closest_marker("torch_threads")
+    if marker is None:
+        yield
+        return
+    import torch
+
+    threads = marker.args[0] if marker.args else marker.kwargs.get("n")
+    if not isinstance(threads, int) or threads < 1:
+        raise pytest.UsageError(f"@pytest.mark.torch_threads needs a positive integer, got {threads!r}")
+    previous = torch.get_num_threads()
+    torch.set_num_threads(threads)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(previous)
 
 
 def _configure_tolerances(config) -> None:
@@ -385,6 +475,9 @@ def _matches_bundle(item, bundle: dict) -> bool:
 def pytest_collection_modifyitems(session, config, items):
     from . import _session
 
+    _markers.apply_device_markers(items)
+    _markers.wrap_memory_markers(items)
+
     if not config.getoption("torch_benchmark"):  # benchmarks are slow: opt in
         benchmarks = [i for i in items if i.get_closest_marker("torch_benchmark") is not None]
         if benchmarks:
@@ -446,6 +539,9 @@ def pytest_report_header(config):
         lines += ["pytest-torch: " + line for line in _repro.describe(bundle)]
     from . import _session
 
+    threads = getattr(config, "_pytest_torch_threads", None)
+    if threads is not None:
+        lines.append(f"pytest-torch: {threads} CPU thread(s) per process (--torch-num-threads)")
     if _session.model_specs:
         weights = "pretrained" if _session.model_pretrained else "random-init"
         lines.append(f"pytest-torch: testing {', '.join(_session.model_specs)} ({weights}); "
@@ -779,6 +875,19 @@ def inference_mode():
 
     with torch.inference_mode():
         yield
+
+
+@pytest.fixture
+def make_batch(make_tensor, torch_seed, torch_device):
+    """Realistic synthetic batches on ``torch_device``, reproducible from the test's seed:
+
+    ``make_batch.tokens(4, 32, vocab_size=1000)``   -> input_ids + attention_mask, mixed lengths
+    ``make_batch.images(8, 3, 224, labels=10)``     -> (images, labels)
+    ``make_batch.loader(dataset, batch_size=8, shuffle=True)`` -> seeded DataLoader
+    """
+    from .data import BatchFactory
+
+    return BatchFactory(make_tensor, seed=torch_seed, device=torch_device)
 
 
 @pytest.fixture(scope="session")

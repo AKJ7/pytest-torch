@@ -79,6 +79,7 @@ nav:
       - Tolerances: guides/tolerances.md
       - Recipes: guides/recipes.md
   - Reference:
-      - Command line and markers: reference/cli.md
+      - Command line: reference/cli.md
+      - Markers: reference/markers.md
       - Fixtures: reference/fixtures.md
       - API: reference/api.md

@@ -29,6 +29,7 @@ Try it on any model first, with no test file:
 
 ```bash
 pytest --torch-model=hf:google-bert/bert-base-uncased     # or timm:NAME, torchvision:NAME, mypackage.models:Net
+pytest --torch-model=hf-tiny:Qwen/Qwen2.5-7B     # the architecture shrunk to 2 small layers: seconds on CPU
 ```
 
 It builds the model (random weights; only the config is downloaded), infers inputs, and runs
@@ -154,6 +155,9 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | Padding, mask and permutation invariance, custom metamorphic relations | `assert_padding_invariant`, `assert_mask_invariant`, `assert_permutation_invariant`, `assert_permutation_equivariant`, `assert_invariant`, `assert_equivariant` |
 | Memory-layout invariance: non-contiguous and channels_last inputs | `assert_layout_invariant` |
 | Every test on every device (CPU, CUDA, Intel XPU, Apple MPS) and, on request, every dtype | `torch_device`, `torch_dtype` fixtures, `--torch-device`, `--torch-dtype`, `@pytest.mark.torch_dtypes`, `available_devices` |
+| Requirements and per-device gaps without hand-written `skipif`s: hardware, versions, packages; skips and strict expected failures for one device or dtype | `@pytest.mark.torch_requires`, `@pytest.mark.torch_skip_on`, `@pytest.mark.torch_xfail_on` |
+| Modes for one test: deterministic algorithms, default dtype, matmul precision (no TF32), no host syncs, anomaly detection | `@pytest.mark.torch_deterministic`, `torch_default_dtype`, `torch_matmul_precision`, `torch_no_host_sync`, `torch_detect_anomaly` |
+| Memory budgets and leak detection that names the accumulating tensors | `@pytest.mark.torch_max_memory`, `@pytest.mark.torch_memory_leak` |
 | Reproducible inputs, identical on every device | `make_tensor`, `torch_generator` fixtures |
 | Hypothesis strategies: edge-case tensors, any memory layout, ragged padded batches | `pytest_torch.strategies`: `tensors`, `shapes`, `padded_batches` |
 
@@ -194,7 +198,7 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | Gradient accumulation matches one full-batch step: loss scaling, gradient resets, step timing | `assert_accumulation_equivalent`, `split_batch` |
 | Mixed-precision training uses the GradScaler correctly and doesn't keep overflowing | `assert_mixed_precision_training` |
 
-**Determinism, configuration and CI** · [performance and determinism](https://akj7.github.io/pytest-torch/guides/performance/), [tolerances](https://akj7.github.io/pytest-torch/guides/tolerances/), [reference](https://akj7.github.io/pytest-torch/reference/cli/)
+**Determinism, configuration and CI** · [performance and determinism](https://akj7.github.io/pytest-torch/guides/performance/), [tolerances](https://akj7.github.io/pytest-torch/guides/tolerances/), [command line](https://akj7.github.io/pytest-torch/reference/cli/), [markers](https://akj7.github.io/pytest-torch/reference/markers/)
 
 | Feature | API |
 |---|---|
@@ -205,6 +209,9 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | pytest-xdist: workers spread over GPUs, memory split, exclusive GPU tests | `--torch-xdist-gpus`, `--torch-gpu-memory-fraction`, `@pytest.mark.torch_gpu_exclusive`, `FileLock` |
 | Mismatch heatmaps and GitHub Actions annotations for failing tests | `--torch-failure-artifacts`, `--torch-github-annotations`, `save_mismatch_heatmap`, `github_annotation` |
 | Session-cached Hugging Face, timm and torchvision models | `model_loader` fixture, `ModelLoader` |
+| Tiny random-init versions of real Hugging Face architectures (Llama, Mixtral, T5, CLIP, ...): only the config is downloaded | `model_loader.hf_tiny`, `shrink_config`, `--torch-model=hf-tiny:NAME` |
+| Realistic synthetic batches: token sequences of mixed lengths with padding and attention masks, images, seeded data loaders | `make_batch` fixture (`tokens`, `images`, `loader`), `BatchFactory` |
+| CPU threads divided between pytest-xdist workers, so parallel runs don't oversubscribe the machine | `--torch-num-threads`, `@pytest.mark.torch_threads` |
 | Run a test body without autograd | `inference_mode` fixture |
 | Zero-code testing of any model: Hugging Face, timm, torchvision or your own, with inferred inputs | `--torch-model`, `--torch-model-checks`, `--torch-model-inputs`, `--torch-model-pretrained` |
 | Generated test suites: contract, compile, export, TorchScript, ONNX, AOTInductor, autocast, golden, output spec, checkpoint, layouts, frozen, training | `ModelSuite` |
