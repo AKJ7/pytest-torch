@@ -1,10 +1,58 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
-### Added
+Testing training code, not just models. You can now run your own training step, checkpoint
+code and fine-tuning setup for a few seeded steps, and get each problem named: an optimizer
+that misses parameters, state missing from a checkpoint, wrong gradient-accumulation
+scaling, GradScaler misuse. This release also adds benchmark suites, tiny versions of
+Hugging Face architectures, realistic synthetic batches, test fixtures for the Lightning and
+Hugging Face trainers, and markers that replace hand-written `skipif`s and setup code. It is
+backward compatible with 1.0: everything new is additive (see [Changed](#changed) for two
+behavior changes).
 
-- Benchmark suites. Subclass `BenchmarkSuite`, implement `make_model()` and
+### Training loops
+
+Run your own training step and checkpoint code for a few seeded steps from fresh setups
+(`TrainingSetup`), with the `training_runner` fixture or the functions directly. See
+`examples/test_training_loops.py` and the new *Training loops* guide.
+
+- `run_training` records per-step telemetry (`StepRecord`: losses, gradient norm, update
+  size, learning rates, optimizer steps, non-finite gradients, loss scale) without changes
+  to the training code. The returned `TrainingRun` adds `assert_healthy`, `assert_finite`,
+  `assert_no_skipped_updates`, `assert_grad_norm_below`, `assert_lr`,
+  `assert_loss_decreases` and `table()`.
+- `assert_optimizer_coverage`: trainable parameters in no optimizer or in several, and
+  optimizers built for another copy of the model.
+- `assert_resume_equivalent`: training resumed from a checkpoint matches uninterrupted
+  training. The state after loading is compared with the saved state to name what's
+  missing (optimizer, scheduler, GradScaler, RNG). `save_training_state`,
+  `load_training_state` and `training_state` are reference implementations.
+- `assert_accumulation_equivalent`: gradient accumulation matches one full-batch step,
+  diagnosing an unscaled loss, gradients not reset and optimizer steps at the wrong
+  micro-batch.
+- `assert_mixed_precision_training`: GradScaler misuse (bypassed `scaler.step`, missing
+  `scaler.update`, clipping before `unscale_`), overflows and non-finite values.
+- `standard_step(loss_fn, accumulation_steps=, max_grad_norm=)` for code without its own
+  step, and `split_batch`.
+- Tolerance checks `training_resume` and `grad_accumulation`.
+- `TrainingRun` gained `records`, `setup`, `coverage_problems` and the assertions above;
+  `assert_loss_decreases` and `assert_overfits_one_batch` return it as before.
+
+### Lightning and the Hugging Face Trainer
+
+- `lightning_trainer` and `hf_trainer` fixtures: a Lightning `Trainer` or a Hugging Face
+  `Trainer` set up for tests: the test's device and seed, 5 steps, no loggers, reports or
+  checkpoints, files in `tmp_path`, any argument overridable. `hf_trainer` logs the loss
+  every step, accepts `make_batch.tokens(...)` as a dataset and builds your `Trainer`
+  subclass with `trainer_class=`. See `examples/test_hf_trainer.py`.
+- `from_lightning(make_module)`: the `make_setup` and `step` of a `LightningModule` with
+  automatic optimization, for `training_runner` and the training-loop checks.
+- New `lightning` extra.
+
+### Benchmark suites
+
+- Subclass `BenchmarkSuite`, implement `make_model()` and
   `make_inputs(batch_size, make_tensor)`, and set `batch_sizes`, `dtypes` and `modes`
   (`"eager"`, `"compile"`). Every combination runs as one test per device and measures:
   - median and p90 latency, and throughput;
@@ -14,77 +62,58 @@
   Each case is measured `rounds` times and the fastest round is kept. Cases are compared
   with per-machine baselines (`--torch-update-perf`, `latency_tolerance`,
   `memory_tolerance`). The run ends with a report table. Benchmarks run only with
-  `--torch-benchmark`; `--torch-benchmark-json` also writes the results. Dtypes the device
-  can't run, and `torch.compile` where it doesn't work, are skipped. See
-  `examples/test_benchmarks.py` and the benchmark in the image classification
-  integration example.
+  `--torch-benchmark`; `--torch-benchmark-json` also writes the results
+  (`BenchmarkResult`). Dtypes the device can't run, and `torch.compile` where it doesn't
+  work, are skipped. See `examples/test_benchmarks.py` and the benchmark in the image
+  classification integration example.
 - `compare_perf`: the baseline comparison of `check_perf`, for numbers you measured
   yourself.
 - `LatencyStats.p90_ms`.
-- Testing training loops: your own training step and checkpoint code, run for a few seeded
-  steps from fresh setups (`TrainingSetup`, with the `training_runner` fixture or the
-  functions directly).
-  - `run_training` records per-step telemetry (`StepRecord`: losses, gradient norm, update
-    size, learning rates, optimizer steps, non-finite gradients, loss scale) without
-    changes to the training code. The returned `TrainingRun` adds `assert_healthy`, `assert_finite`,
-    `assert_no_skipped_updates`, `assert_grad_norm_below`, `assert_lr`,
-    `assert_loss_decreases` and `table()`.
-  - `assert_optimizer_coverage`: trainable parameters in no optimizer or in several, and
-    optimizers built for another copy of the model.
-  - `assert_resume_equivalent`: training resumed from a checkpoint matches uninterrupted
-    training, and the state after loading is compared with the saved state to name what's
-    missing (optimizer, scheduler, GradScaler, RNG). `save_training_state` and
-    `load_training_state` are reference implementations.
-  - `assert_accumulation_equivalent`: gradient accumulation matches one full-batch step,
-    diagnosing an unscaled loss, gradients not reset and optimizer steps at the wrong
-    micro-batch.
-  - `assert_mixed_precision_training`: GradScaler misuse (bypassed `scaler.step`, missing
-    `scaler.update`, clipping before `unscale_`), overflows and non-finite values.
-  - `standard_step(loss_fn, accumulation_steps=, max_grad_norm=)` for code without its own
-    step, and `split_batch`.
-  - Tolerance checks `training_resume` and `grad_accumulation`.
 
-  See `examples/test_training_loops.py`.
+### Synthetic data and tiny models
+
 - `make_batch` fixture: realistic synthetic batches drawn through `make_tensor` (seeded,
   on `torch_device`, recorded in reproduction bundles). `tokens()` gives `input_ids` and
   `attention_mask` for rows of mixed lengths (always one full row and one padded row,
   padding left or right, real tokens never equal to the pad id, optional class or
-  language-modeling labels); `images()` gives normalized or raw `uint8` images in NCHW or
-  NHWC; `loader()` gives a `DataLoader` shuffled by the test's seed.
+  language-modeling labels). `images()` gives normalized or raw `uint8` images in NCHW or
+  NHWC. `loader()` gives a `DataLoader` shuffled by the test's seed.
 - `model_loader.hf_tiny(name)`: a small, randomly initialized model with the architecture of
   a Hugging Face model, from its config alone, with weights fixed by a seed. `shrink_config`
   does the shrinking (layers, widths, attention and key/value heads, feed-forward sizes,
   experts, per-layer lists, nested configs). `--torch-model=hf-tiny:NAME` uses it for
-  zero-code testing.
+  zero-code testing: the Qwen2.5-7B architecture goes through the zero-code suite in
+  seconds on a CPU.
+
+### Markers
+
+- `torch_requires(...)`: skip unless devices (`cuda`, `xpu`, `mps`, `gpu`), versions
+  (`torch`, `python` specifiers), `compile`, `gpu_memory_gb`, `cuda_capability` and
+  `packages` are available, with the reason at the test's location.
+- `torch_skip_on(*devices)` and `torch_xfail_on(*devices)`: skip or expect a failure for one
+  device (and optionally dtype) only. Expected failures are strict and take `raises=`.
+- `torch_deterministic`, `torch_default_dtype(dtype)`, `torch_matmul_precision(...)`
+  (`"highest"` disables TF32, convolutions included), `torch_no_host_sync`,
+  `torch_detect_anomaly`: set for one test, fixtures included, and restored afterwards.
+- `torch_max_memory(mb=)`: peak memory budget of the test body (CUDA, XPU).
+- `torch_memory_leak(iterations=5)`: runs the body repeatedly and fails when every run
+  leaves more tensors or memory behind, describing the new tensors and their holders.
+- `torch_threads(n)`: the number of CPU threads torch uses during one test.
+- A new *Markers* reference page documents every marker with examples.
+
+### Parallel runs
+
 - `--torch-num-threads` (default `auto`): under pytest-xdist, each worker uses its share of
   the CPU cores instead of one thread per core, unless `OMP_NUM_THREADS` is set. An integer
-  sets the count everywhere; `@pytest.mark.torch_threads(n)` sets it for one test.
-- `lightning_trainer` and `hf_trainer` fixtures: a Lightning `Trainer` or a Hugging Face
-  `Trainer` set up for tests: the test's device and seed, 5 steps, no loggers, reports or
-  checkpoints, files in `tmp_path`, any argument overridable. `hf_trainer` logs the loss
-  every step, accepts `make_batch.tokens(...)` as a dataset and builds your `Trainer`
-  subclass with `trainer_class=`. See `examples/test_hf_trainer.py`.
-- `from_lightning(make_module)`: the `make_setup` and `step` of a `LightningModule` with
-  automatic optimization, for `training_runner` and the training-loop checks.
-- The `hf` extra adds `accelerate` (needed by the Hugging Face `Trainer`); new `lightning`
-  extra.
-- CI: an `integrations` job runs the tests with transformers, timm, torchvision and
-  Lightning installed; until now, the tests that need them were skipped in CI.
-- Markers:
-  - `torch_requires(...)`: skip unless devices (`cuda`, `xpu`, `mps`, `gpu`), versions
-    (`torch`, `python` specifiers), `compile`, `gpu_memory_gb`, `cuda_capability` and
-    `packages` are available, with the reason at the test's location.
-  - `torch_skip_on(*devices)` and `torch_xfail_on(*devices)`: skip or expect a failure
-    for one device (and optionally dtype) only. Expected failures are strict and take
-    `raises=`.
-  - `torch_deterministic`, `torch_default_dtype(dtype)`, `torch_matmul_precision(...)`
-    (`"highest"` disables TF32, convolutions included), `torch_no_host_sync`,
-    `torch_detect_anomaly`: set for one test, fixtures included, and restored afterwards.
-  - `torch_max_memory(mb=)`: peak memory budget of the test body (CUDA, XPU).
-  - `torch_memory_leak(iterations=5)`: runs the body repeatedly and fails when every run
-    leaves more tensors or memory behind, describing the new tensors and their holders.
-- `TrainingRun` gained `records`, `setup` and the assertions above; `assert_loss_decreases`
-  and `assert_overfits_one_batch` return it as before.
+  sets the count everywhere; `none` keeps torch's default.
+
+### Changed
+
+- Under pytest-xdist, workers now use their share of the CPU cores (`--torch-num-threads=auto`)
+  instead of torch's default of one thread per core each. Parallel runs no longer
+  oversubscribe the machine, but CPU-bound timings change; `--torch-num-threads=none`
+  restores the previous behavior. Runs without xdist are unaffected.
+- The `hf` extra also installs `accelerate`, which the Hugging Face `Trainer` needs.
 
 ### Fixed
 
@@ -97,6 +126,11 @@
   - rejects an empty selection (`checks=[]`, or skipping every check) with a
     `ValueError` before running the model, and doesn't run the model for `eval_mode`
     alone.
+
+### Development
+
+- CI: an `integrations` job runs the tests with transformers, timm, torchvision and
+  Lightning installed; until now, the tests that need them were skipped in CI.
 
 ## 1.0.0
 
