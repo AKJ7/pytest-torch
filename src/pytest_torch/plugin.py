@@ -119,7 +119,7 @@ def pytest_addoption(parser):
         default="auto",
         help="CPU threads per test process: an integer, 'none' (torch's default), or 'auto': "
         "under pytest-xdist, the CPU cores divided between the workers (unless OMP_NUM_THREADS "
-        "is set); otherwise torch's default.",
+        "or MKL_NUM_THREADS is set); otherwise torch's default.",
     )
     group.addoption(
         "--torch-gpu-memory-fraction",
@@ -301,6 +301,10 @@ def _cpu_count() -> int:
         return os.cpu_count() or 1
 
 
+#: thread-count variables torch reads at startup (MKL_NUM_THREADS wins over OMP_NUM_THREADS)
+THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS")
+
+
 def _thread_count(value: str) -> int | None:
     """Threads for ``--torch-num-threads``; ``None`` leaves torch's default."""
     import os
@@ -310,8 +314,8 @@ def _thread_count(value: str) -> int | None:
     if value == "none":
         return None
     if value == "auto":
-        if worker_index() is None or worker_count() < 2 or "OMP_NUM_THREADS" in os.environ:
-            return None
+        if worker_index() is None or worker_count() < 2 or any(v in os.environ for v in THREAD_VARIABLES):
+            return None  # torch's default, or the user's own setting
         return max(1, _cpu_count() // worker_count())
     try:
         threads = int(value)
@@ -332,7 +336,8 @@ def _configure_threads(config) -> None:
 
     config._pytest_torch_previous_threads = torch.get_num_threads()
     torch.set_num_threads(threads)
-    os.environ["OMP_NUM_THREADS"] = str(threads)  # subprocesses (pytester, compile workers)
+    for variable in THREAD_VARIABLES:  # subprocesses (pytester, compile workers); torch prefers MKL's
+        os.environ[variable] = str(threads)
     config._pytest_torch_threads = threads
 
 

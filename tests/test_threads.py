@@ -25,7 +25,8 @@ def threads(result):
 
 @pytest.fixture
 def probe(pytester, monkeypatch):
-    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    for variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):  # CI runners may set them
+        monkeypatch.delenv(variable, raising=False)
     pytester.makepyfile(test_probe=PROBE)
 
     def run(*args):
@@ -48,8 +49,18 @@ def test_auto_divides_the_cores_between_xdist_workers(probe, monkeypatch):
     monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw1")  # what a worker of `pytest -n 4` sees
     monkeypatch.setenv("PYTEST_XDIST_WORKER_COUNT", "4")
     assert threads(probe()) == max(1, _cpu_count() // 4)
-    monkeypatch.setenv("OMP_NUM_THREADS", "3")  # the user's own setting wins
-    assert threads(probe()) == 3
+
+
+@pytest.mark.parametrize("variable", ["OMP_NUM_THREADS", "MKL_NUM_THREADS"])
+def test_auto_respects_the_users_thread_variables(probe, monkeypatch, variable):
+    # The user's own setting wins: auto changes nothing, whatever torch makes of the
+    # variables (it prefers MKL_NUM_THREADS over OMP_NUM_THREADS, for one).
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw1")
+    monkeypatch.setenv("PYTEST_XDIST_WORKER_COUNT", "4")
+    monkeypatch.setenv(variable, "3")
+    auto = probe()
+    assert threads(auto) == threads(probe("--torch-num-threads=none"))
+    auto.stdout.no_fnmatch_line("*CPU thread(s) per process*")
 
 
 def test_auto_leaves_a_single_process_alone(probe):

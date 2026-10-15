@@ -80,9 +80,9 @@ pytest -n 4 --torch-xdist-gpus=0,1 --torch-gpu-memory-fraction=auto
 - `@pytest.mark.torch_gpu_exclusive` serializes heavy tests per GPU across workers.
 - Each worker uses its share of the CPU cores (`--torch-num-threads=auto`, the default):
   4 workers on 16 cores get 4 threads each. Without this, every worker starts one thread per
-  core, and the oversubscribed machine can slow tests down by orders of magnitude. Set
-  `OMP_NUM_THREADS` or `--torch-num-threads=N` to choose, `none` to keep torch's default;
-  `@pytest.mark.torch_threads(1)` pins one test.
+  core, and the oversubscribed machine can slow tests down by orders of magnitude. Your own
+  `OMP_NUM_THREADS` or `MKL_NUM_THREADS` is left alone; `--torch-num-threads=N` sets a
+  count, `none` keeps torch's default, and `@pytest.mark.torch_threads(1)` pins one test.
 - Record performance baselines without parallel workers: timings taken while other workers
   share the machine are not a fair reference.
 
