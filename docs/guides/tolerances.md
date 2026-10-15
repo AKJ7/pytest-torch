@@ -18,7 +18,7 @@ A key is one of:
 | Key | Applies to |
 |---|---|
 | a dtype: `float64`, `float32`, `float16`, `bfloat16`, `complex64`, `complex128`, `float8_*` | any comparison of tensors of that dtype: `assert_tensors_close`, `assert_outputs_close`, golden files, invariance and batch checks, the contract's same-device checks, `assert_matches_reference` |
-| a check: `compile_parity`, `export_parity`, `aoti_parity`, `torchscript_parity`, `onnx_parity`, `autocast_parity`, `device_parity`, `dtype_parity`, `divergence`, `gradcheck`, `checkpoint`, `layout_invariance`, `streaming` | the default of that assertion (or contract check) |
+| a check: `compile_parity`, `export_parity`, `aoti_parity`, `torchscript_parity`, `onnx_parity`, `autocast_parity`, `device_parity`, `dtype_parity`, `divergence`, `gradcheck`, `checkpoint`, `layout_invariance`, `streaming`, `training_resume`, `grad_accumulation` | the default of that assertion (or contract check) |
 | `<device>.<dtype or check>`, device one of `cpu`, `cuda`, `xpu`, `mps` | the same, only when the test runs on that device |
 
 An entry may set only `rtol` or only `atol`; the other value comes from the next layer.

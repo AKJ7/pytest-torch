@@ -60,12 +60,32 @@ _EXPORTS = {
     "assert_loss_decreases": "training",
     "assert_overfits_one_batch": "training",
     "TrainingRun": "training",
+    "StepRecord": "training",
+    # training loops
+    "TrainingSetup": "training_loop",
+    "from_lightning": "frameworks",
+    # synthetic data and tiny models
+    "BatchFactory": "data",
+    "shrink_config": "integrations",
+    "TrainingRunner": "training_loop",
+    "run_training": "training_loop",
+    "standard_step": "training_loop",
+    "split_batch": "training_loop",
+    "assert_optimizer_coverage": "training_loop",
+    "assert_resume_equivalent": "training_loop",
+    "ResumeReport": "training_loop",
+    "training_state": "training_loop",
+    "save_training_state": "training_loop",
+    "load_training_state": "training_loop",
+    "assert_accumulation_equivalent": "training_loop",
+    "assert_mixed_precision_training": "training_loop",
     # generated test suites
     "ModelSuite": "suite",
     # performance
     "measure_latency": "perf",
     "measure_peak_memory": "perf",
     "check_perf": "perf",
+    "compare_perf": "perf",
     "PerfStore": "perf",
     "PerfResult": "perf",
     # torch.compile health, host-device syncs
@@ -107,6 +127,9 @@ _EXPORTS = {
     "assert_streaming_equivalent": "stateful",
     "StreamingEquivalence": "stateful",
     "StreamingReport": "stateful",
+    # benchmarks
+    "BenchmarkSuite": "benchmark",
+    "BenchmarkResult": "benchmark",
     # dataset evaluation
     "evaluate": "evaluation",
     "evaluate_detailed": "evaluation",
@@ -122,13 +145,16 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         assert_outputs_close,
         assert_tensors_close,
     )
+    from .benchmark import BenchmarkResult, BenchmarkSuite
     from .checkpoint import assert_checkpoint_loads, assert_checkpoint_roundtrip
     from .compilation import assert_no_graph_breaks, assert_no_recompiles
     from .contract import CheckResult, ContractReport, check_inference_contract
+    from .data import BatchFactory
     from .devices import available_devices
     from .divergence import DivergenceReport, LayerDiff, localize_divergence
     from .evaluation import MetricResult, evaluate, evaluate_detailed, paired_difference
-    from .integrations import ModelLoader
+    from .frameworks import from_lightning
+    from .integrations import ModelLoader, shrink_config
     from .invariance import (
         assert_equivariant,
         assert_invariant,
@@ -159,7 +185,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         assert_torchscript_parity,
         compare_outputs,
     )
-    from .perf import PerfResult, PerfStore, check_perf, measure_latency, measure_peak_memory
+    from .perf import PerfResult, PerfStore, check_perf, compare_perf, measure_latency, measure_peak_memory
     from .report import github_annotation, save_mismatch_heatmap
     from .repro import load_repro, record_repro
     from .specs import Probabilities, TensorSpec, assert_output_spec
@@ -168,6 +194,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .sync import assert_no_host_sync, forbid_host_sync
     from .tolerances import tolerance_overrides
     from .training import (
+        StepRecord,
         TrainingRun,
         assert_all_params_receive_grad,
         assert_frozen,
@@ -175,6 +202,21 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         assert_gradients_finite,
         assert_loss_decreases,
         assert_overfits_one_batch,
+    )
+    from .training_loop import (
+        ResumeReport,
+        TrainingRunner,
+        TrainingSetup,
+        assert_accumulation_equivalent,
+        assert_mixed_precision_training,
+        assert_optimizer_coverage,
+        assert_resume_equivalent,
+        load_training_state,
+        run_training,
+        save_training_state,
+        split_batch,
+        standard_step,
+        training_state,
     )
     from .utils import deterministic_algorithms, is_compile_supported, seed_everything
 

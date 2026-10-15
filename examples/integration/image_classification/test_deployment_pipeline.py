@@ -2,6 +2,7 @@
 
 Run: pytest examples/integration/image_classification -v        (add -m "not slow" to skip AOTInductor)
 Regenerate the golden file: pytest examples/integration/image_classification -k golden --torch-update-golden --torch-device=cpu
+Benchmark the pipeline:     pytest examples/integration/image_classification --torch-benchmark -k Benchmark
 """
 import copy
 
@@ -9,6 +10,7 @@ import pytest
 import torch
 
 from pytest_torch import (
+    BenchmarkSuite,
     ModelSuite,
     Probabilities,
     TensorSpec,
@@ -124,3 +126,22 @@ def test_outputs_unchanged_by_refactors(torch_seed, torch_device, golden):
     pipeline = InferencePipeline(ResNet()).to(torch_device).eval()
     with torch.inference_mode():
         golden.check(pipeline(make_images(4, seed=4)[0].to(torch_device)), atol=1e-4)
+
+
+# --------------------------------------------------------------------------- #
+# Release benchmark: run with `pytest --torch-benchmark` (deselected otherwise)
+# --------------------------------------------------------------------------- #
+class TestPipelineBenchmark(BenchmarkSuite):
+    """Latency, throughput and memory of the deployed pipeline, per batch size, dtype and
+    execution mode. Record this machine's baseline once with
+    `pytest --torch-benchmark --torch-update-perf`; later runs fail on a slowdown."""
+
+    batch_sizes = (1, 16)
+    dtypes = (torch.float32, torch.bfloat16)
+    modes = ("eager", "compile")
+
+    def make_model(self):
+        return InferencePipeline(ResNet())
+
+    def make_inputs(self, batch_size, make_tensor):
+        return make_tensor(batch_size, 32, 32, 3, dtype=torch.uint8, low=0, high=256)

@@ -11,6 +11,20 @@ Regenerate the golden file: pytest examples/test_markers.py --torch-update-golde
 | torch_gpu_exclusive(timeout=...)         | (autouse)                 | One such test at a time per GPU, under xdist   |
 | torch_tolerance(**entries)               | every comparison          | Default rtol/atol, as in pyproject.toml        |
 | torch_dtypes(*dtypes)                    | torch_dtype, make_tensor  | Runs the test once per dtype                   |
+| torch_threads(n)                         | (autouse)                 | CPU threads torch uses during the test         |
+| torch_benchmark                          | --torch-benchmark         | A benchmark: deselected unless the flag is set |
+| torch_requires(**requirements)           | (collection)              | Skips unless hardware, versions, packages fit  |
+| torch_skip_on(*devices, dtype=, reason=) | torch_device, torch_dtype | Skips only the runs on those devices           |
+| torch_xfail_on(*devices, dtype=, ...)    | torch_device, torch_dtype | Strict expected failure on those devices       |
+| torch_deterministic                      | (autouse)                 | Deterministic algorithms during the test       |
+| torch_default_dtype(dtype)               | (autouse)                 | torch's default dtype during the test          |
+| torch_matmul_precision(precision)        | (autouse)                 | Float32 matmul precision; "highest": no TF32   |
+| torch_no_host_sync                       | (autouse)                 | Host-device syncs raise (tests on CUDA)        |
+| torch_detect_anomaly                     | (autouse)                 | Backward NaNs name the operation that made them|
+| torch_max_memory(mb=...)                 | (test body)               | Peak memory budget (CUDA, XPU)                 |
+| torch_memory_leak(iterations=5)          | (test body)               | Fails when repeated runs keep accumulating     |
+
+Benchmarks have their own example: examples/test_benchmarks.py.
 
 The closest marker wins: a test's own marker overrides its class's, which overrides the
 module's (`pytestmark`). For torch_tolerance all levels apply, the closest winning per key.
@@ -175,6 +189,103 @@ def test_runs_once_per_dtype(torch_dtype, make_tensor):
 
 def test_without_marker_the_default_applies(torch_dtype):
     assert torch_dtype == torch.float32  # unless --torch-dtype says otherwise
+
+
+# --------------------------------------------------------------------------- #
+# torch_threads
+# --------------------------------------------------------------------------- #
+# Single-threaded for this test only, e.g. for stable timings; restored afterwards.
+@pytest.mark.torch_threads(1)
+def test_single_threaded():
+    assert torch.get_num_threads() == 1
+
+
+# --------------------------------------------------------------------------- #
+# torch_requires
+# --------------------------------------------------------------------------- #
+# Skips with a readable reason unless every requirement holds: devices (cuda, xpu, mps,
+# gpu), versions (torch, python: specifiers like ">=2.4"), compile, gpu_memory_gb,
+# cuda_capability and packages. Markers on the module, class and test all apply.
+@pytest.mark.torch_requires(torch=">=2.0", packages=["numpy"])
+def test_needs_numpy():
+    import numpy as np
+
+    assert np.asarray(torch.ones(2)).sum() == 2
+
+
+@pytest.mark.torch_requires(cuda=True, cuda_capability=(8, 0))  # bfloat16 tensor cores: Ampere+
+def test_needs_an_ampere_gpu(make_tensor):
+    x = make_tensor(64, 64, dtype=torch.bfloat16).cuda()
+    assert (x @ x).dtype == torch.bfloat16
+
+
+# --------------------------------------------------------------------------- #
+# torch_skip_on / torch_xfail_on
+# --------------------------------------------------------------------------- #
+# Apply only to the runs on the given devices (and dtypes, with dtype=); the others run.
+@pytest.mark.torch_skip_on("mps", reason="float64 isn't supported on MPS")
+def test_float64(torch_device):
+    assert torch.ones(2, dtype=torch.float64, device=torch_device).sum() == 2
+
+
+# Strict: if a torch release implements the op, the run fails as XPASS, so you remove the
+# marker. raises= keeps a different error a real failure.
+def fused_scale(x):
+    if x.device.type == "cpu":
+        raise NotImplementedError("fused_scale has no CPU kernel yet")
+    return x * 2
+
+
+@pytest.mark.torch_xfail_on("cpu", reason="fused_scale is GPU-only", raises=NotImplementedError)
+def test_known_gap(torch_device):
+    assert fused_scale(torch.ones(2, device=torch_device)).sum() == 4
+
+
+# --------------------------------------------------------------------------- #
+# Modes: set for the test (fixtures included) and restored afterwards
+# --------------------------------------------------------------------------- #
+@pytest.mark.torch_deterministic
+def test_deterministic():
+    assert torch.are_deterministic_algorithms_enabled()
+
+
+@pytest.mark.torch_default_dtype(torch.float64)
+def test_float64_by_default():
+    assert nn.Linear(2, 2).weight.dtype == torch.float64
+
+
+@pytest.mark.torch_matmul_precision("highest")  # no TF32: exact float32 comparisons on Ampere+
+def test_exact_float32_matmul(make_tensor, torch_device):
+    a, b = make_tensor(32, 32).to(torch_device), make_tensor(32, 32).to(torch_device)
+    assert_tensors_close((a @ b).cpu(), a.cpu().double().matmul(b.cpu().double()).float(), rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.torch_no_host_sync  # .item(), .cpu(), `if tensor:` raise on CUDA; not checked elsewhere
+def test_forward_never_syncs(model, make_tensor):
+    model(make_tensor(8, 16))
+
+
+@pytest.mark.torch_detect_anomaly  # a NaN in backward names the forward op that produced it
+def test_gradients(model, make_tensor):
+    model(make_tensor(8, 16))["logits"].sum().backward()
+
+
+# --------------------------------------------------------------------------- #
+# Memory
+# --------------------------------------------------------------------------- #
+@pytest.mark.torch_max_memory(mb=64)  # peak memory of the test body; CUDA and XPU only
+def test_inference_fits(model, make_tensor):
+    with torch.inference_mode():
+        model(make_tensor(256, 16))
+
+
+HISTORY = []
+
+
+@pytest.mark.torch_memory_leak(iterations=5)  # runs the body 1 + 5 times
+def test_no_leak(model, make_tensor):
+    loss = model(make_tensor(8, 16))["logits"].sum()
+    HISTORY.append(loss.item())  # Try: HISTORY.append(loss): every run keeps a graph alive
 
 
 # --------------------------------------------------------------------------- #

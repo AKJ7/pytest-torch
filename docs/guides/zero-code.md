@@ -24,6 +24,7 @@ torch-model::test_gradients_finite[hf:google-bert/bert-base-uncased-cpu] PASSED
 | Spec | Builds | Inputs |
 |---|---|---|
 | `hf:NAME` or `hf:NAME@AutoModelForX` | `transformers.AutoModel` (or the given class) from the config: random weights, only `config.json` is downloaded. `NAME` can be a local folder | Text models: `input_ids` with a padded `attention_mask` (plus `decoder_input_ids` for encoder-decoders, `use_cache=False`). Vision models: `pixel_values` of the configured size |
+| `hf-tiny:NAME` or `hf-tiny:NAME@AutoModelForX` | The same architecture shrunk to 2 layers of width 64 (see [`model_loader.hf_tiny`](../reference/fixtures.md#model_loader)): seconds on a CPU, even for billion-parameter models. Random weights only | As for `hf:` |
 | `timm:NAME` | `timm.create_model(NAME)`, random weights | Images of the model's own `input_size` |
 | `torchvision:NAME` | `torchvision.models.get_model(NAME)`, classification and segmentation models | 224×224 images (299 for Inception) |
 | `package.module:Factory` or `path/to/file.py:Factory` | `Factory()` (a class or function returning an `nn.Module`), or an `nn.Module` object | The model's `example_inputs(batch_size)` if it has one; otherwise inferred from the first layer: `Linear`, `Conv1d/2d/3d`, `Embedding`, a batch-first RNN or transformer layer |

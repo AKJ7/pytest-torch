@@ -267,10 +267,56 @@ def _jacobians(fn: Callable, args: tuple, eps: float):
 # Learning
 # --------------------------------------------------------------------------- #
 @dataclass
+class StepRecord:
+    """Telemetry of one training step, recorded by :func:`run_training`.
+
+    Per-optimizer values are keyed by optimizer name (``"optimizer"`` for a single one).
+    ``grad_norm``, ``lrs`` and ``nonfinite_grads`` are read when ``optimizer.step()``
+    runs, so they describe the update that was applied.
+    """
+
+    step: int
+    losses: dict[str, float] = field(default_factory=dict)
+    optimizer_steps: dict[str, int] = field(default_factory=dict)
+    grad_norm: dict[str, float] = field(default_factory=dict)  # total L2 norm before the step
+    update_norm: dict[str, float] = field(default_factory=dict)  # L2 norm of the parameter change
+    lrs: dict[str, list[float]] = field(default_factory=dict)  # per parameter group
+    nonfinite_grads: list[str] = field(default_factory=list)  # parameters with NaN/Inf grads at a step
+    loss_scale: float | None = None  # GradScaler scale after the step
+    amp_problems: list[str] = field(default_factory=list)
+
+    @property
+    def loss(self) -> float | None:
+        """The ``"loss"`` entry, or the first loss the step returned."""
+        if "loss" in self.losses:
+            return self.losses["loss"]
+        return next(iter(self.losses.values()), None)
+
+    @property
+    def skipped(self) -> bool:
+        """No optimizer stepped (not called, or skipped by a GradScaler after an overflow)."""
+        return not any(self.optimizer_steps.values())
+
+
+def _g(value: float | None) -> str:
+    return "-" if value is None else f"{value:.4g}"
+
+
+@dataclass
 class TrainingRun:
-    """Loss curve of a short training run (``losses[0]`` is before the first step)."""
+    """Loss curve of a short training run (``losses[0]`` is before the first step).
+
+    Runs from :func:`run_training` also hold per-step telemetry (``records``), the trained
+    ``setup`` and the optimizer coverage problems found before training, and offer
+    assertions: :meth:`assert_healthy`, :meth:`assert_finite`,
+    :meth:`assert_no_skipped_updates`, :meth:`assert_grad_norm_below`, :meth:`assert_lr`
+    and :meth:`assert_loss_decreases`. Each returns the run, so they chain.
+    """
 
     losses: list[float] = field(default_factory=list)
+    records: list[StepRecord] = field(default_factory=list)
+    setup: Any = None
+    coverage_problems: list[str] = field(default_factory=list)
 
     @property
     def initial(self) -> float:
@@ -284,6 +330,199 @@ class TrainingRun:
         n = len(self.losses)
         picks = sorted({round(i * (n - 1) / (points - 1)) for i in range(points)}) if n > 1 else [0]
         return ", ".join(f"step {i}: {self.losses[i]:.4g}" for i in picks)
+
+    # ----------------------------------------------------------------------- #
+    # telemetry
+    # ----------------------------------------------------------------------- #
+    def table(self, highlight: Sequence[int] = (), limit: int = 12) -> str:
+        """Per-step telemetry; long runs show the first and last steps plus ``highlight``."""
+        records = self.records
+        shown: list[StepRecord | None]
+        if len(records) > limit:
+            keep = {*range(3), *range(len(records) - 3, len(records))}
+            keep |= {i for i, r in enumerate(records) if r.step in set(highlight)}
+            shown = []
+            for i, record in enumerate(records):
+                if i in keep:
+                    shown.append(record)
+                elif shown and shown[-1] is not None:
+                    shown.append(None)
+        else:
+            shown = list(records)
+        scaled = any(r.loss_scale is not None for r in records)
+        header = ["step", "loss", "grad norm", "update", "lr", "opt steps"] + (["scale"] if scaled else [])
+        rows = []
+        for r in shown:
+            if r is None:
+                rows.append(["..."] + [""] * (len(header) - 1))
+                continue
+            names = list(r.optimizer_steps)
+            row = [
+                str(r.step),
+                _g(r.loss),
+                "/".join(_g(r.grad_norm.get(n)) for n in names),
+                "/".join(_g(r.update_norm.get(n)) for n in names),
+                "/".join(",".join(f"{lr:.3g}" for lr in r.lrs.get(n, [])) or "-" for n in names),
+                "/".join(str(r.optimizer_steps[n]) for n in names) + (" skipped" if r.skipped else ""),
+            ]
+            if scaled:
+                row.append(_g(r.loss_scale))
+            rows.append(row)
+        widths = [max(len(h), *(len(row[i]) for row in rows)) if rows else len(h) for i, h in enumerate(header)]
+        lines = ["  ".join(c.ljust(w) for c, w in zip(header, widths)).rstrip()]
+        lines += ["  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip() for row in rows]
+        return "\n".join("  " + line for line in lines)
+
+    def _fail(self, header: str, problems: list[str], hints: Sequence[str] = (),
+              highlight: Sequence[int] = ()) -> None:
+        text = format_problems(header, problems)
+        if self.records:
+            text += "\nTelemetry:\n" + self.table(highlight)
+        text += "".join(f"\nHint: {h}" for h in dict.fromkeys(hints))
+        raise AssertionError(text)
+
+    def _need_records(self, what: str) -> None:
+        if not self.records:
+            raise ValueError(f"{what} needs per-step telemetry: use a run from run_training()")
+
+    # ----------------------------------------------------------------------- #
+    # assertions
+    # ----------------------------------------------------------------------- #
+    def assert_finite(self) -> TrainingRun:
+        """Losses, the gradients applied by every optimizer step and the final parameters
+        are finite."""
+        self._need_records("assert_finite")
+        problems, steps = [], []
+        for r in self.records:
+            bad = [k for k, v in r.losses.items() if not math.isfinite(v)]
+            if bad:
+                problems.append(f"step {r.step}: non-finite {', '.join(bad)} ({', '.join(_g(r.losses[k]) for k in bad)})")
+                steps.append(r.step)
+            if r.nonfinite_grads:
+                names = ", ".join(r.nonfinite_grads[:3]) + (" ..." if len(r.nonfinite_grads) > 3 else "")
+                problems.append(f"step {r.step}: optimizer.step() applied non-finite gradients ({names})")
+                steps.append(r.step)
+        if self.setup is not None:
+            for name, param in self.setup.model.named_parameters():
+                if not bool(torch.isfinite(param.detach()).all()):
+                    problems.append(f"{name}: parameter is not finite after training")
+        if problems:
+            self._fail(f"Training produced non-finite values ({len(problems)} problem(s)):", problems, [
+                "the first non-finite step is where to look: log(0), division by a tiny norm, a "
+                "learning rate that is too high, or float16 overflow (use a GradScaler).",
+            ], steps)
+        return self
+
+    def assert_no_skipped_updates(self, *, every: int = 1, max_skipped: int = 0) -> TrainingRun:
+        """Every ``every``-th step updates the parameters: some optimizer steps, and every
+        optimizer that steps changes them. Up to ``max_skipped`` steps may skip the update
+        (e.g. early GradScaler overflows)."""
+        self._need_records("assert_no_skipped_updates")
+        skipped = [r for r in self.records if (r.step + 1) % every == 0 and r.skipped]
+        problems = [f"step {r.step}: no optimizer step" for r in skipped] if len(skipped) > max_skipped else []
+        hints = ["optimizer.step() isn't reached on every step (an early return, a wrong accumulation "
+                 "condition), or a GradScaler skips it after inf/NaN gradients."] if problems else []
+        for r in self.records:
+            for name, norm in r.update_norm.items():
+                if r.optimizer_steps.get(name) and norm == 0.0:
+                    problems.append(f"step {r.step}: {name!r} stepped but no parameter changed")
+                    hints.append("a learning rate of 0 (check the scheduler and warmup), gradients that are "
+                                 "None, or parameters missing from the optimizer.")
+        if problems:
+            self._fail(f"{len(problems)} step(s) did not update the model:", problems, hints,
+                       [r.step for r in skipped])
+        return self
+
+    def assert_grad_norm_below(self, max_norm: float) -> TrainingRun:
+        """The total gradient norm stays below ``max_norm`` at every optimizer step."""
+        self._need_records("assert_grad_norm_below")
+        problems, steps = [], []
+        for r in self.records:
+            for name, norm in r.grad_norm.items():
+                if not (norm <= max_norm):  # NaN fails too
+                    problems.append(f"step {r.step}: {name!r} gradient norm {norm:.4g} > {max_norm:g}")
+                    steps.append(r.step)
+        if problems:
+            self._fail("Exploding gradients:", problems, [
+                "lower the learning rate, clip gradients (clip_grad_norm_), check the loss scale "
+                "and normalization layers.",
+            ], steps)
+        return self
+
+    def assert_lr(
+        self,
+        expected: Callable[[int], float] | Sequence[float],
+        *,
+        optimizer: str | None = None,
+        group: int = 0,
+        rtol: float = 1e-6,
+    ) -> TrainingRun:
+        """The learning rate used at each step matches ``expected``: a function of the step
+        index or one value per step. ``optimizer`` names it when there are several."""
+        self._need_records("assert_lr")
+        names = list(self.records[0].lrs) or list(self.records[0].optimizer_steps)
+        name = optimizer if optimizer is not None else names[0]
+        if optimizer is None and len(names) > 1:
+            raise ValueError(f"several optimizers: pass optimizer= one of {names}")
+        problems, steps = [], []
+        for i, r in enumerate(self.records):
+            if not callable(expected) and i >= len(expected):
+                break
+            want = expected(r.step) if callable(expected) else expected[i]
+            lrs = r.lrs.get(name)
+            if lrs is None or group >= len(lrs):
+                raise ValueError(f"no learning rate recorded for {name!r} group {group}")
+            if not math.isclose(lrs[group], want, rel_tol=rtol, abs_tol=1e-12):
+                problems.append(f"step {r.step}: lr {lrs[group]:.6g}, expected {want:.6g}")
+                steps.append(r.step)
+        if problems:
+            self._fail(f"Unexpected learning rates for {name!r} group {group}:", problems, [
+                "scheduler.step() called before optimizer.step(), once per batch instead of per epoch "
+                "(or the reverse), or warmup configured in the wrong unit.",
+            ], steps)
+        return self
+
+    def assert_loss_decreases(self, min_relative_decrease: float = 0.1) -> TrainingRun:
+        """The mean loss of the last quarter of the steps is ``min_relative_decrease`` below
+        that of the first quarter (averaging smooths out batch-to-batch noise)."""
+        losses = [x for x in self.losses if x is not None]
+        if len(losses) < 2:
+            raise ValueError("need at least two recorded losses")
+        window = max(1, len(losses) // 4)
+        first = sum(losses[:window]) / window
+        last = sum(losses[-window:]) / window
+        target = first * (1 - min_relative_decrease) if first > 0 else first
+        if not (math.isfinite(last) and last < target):
+            self._fail(f"Loss did not decrease by {min_relative_decrease:.0%}:", [
+                f"mean of the first {window} step(s) {first:.4g} -> last {window} step(s) {last:.4g}",
+            ], ["check the loss sign, the learning rate, and that the optimizer sees the parameters "
+                "(assert_optimizer_coverage)."])
+        return self
+
+    def assert_healthy(
+        self,
+        *,
+        max_grad_norm: float | None = None,
+        min_relative_decrease: float | None = None,
+        every: int = 1,
+        max_skipped: int = 0,
+    ) -> TrainingRun:
+        """Optimizer coverage, finite values and no skipped updates; plus a gradient-norm
+        bound and a loss decrease when given."""
+        if self.coverage_problems:
+            self._fail("Optimizer coverage:", self.coverage_problems, [_COVERAGE_HINT])
+        self.assert_finite()
+        self.assert_no_skipped_updates(every=every, max_skipped=max_skipped)
+        if max_grad_norm is not None:
+            self.assert_grad_norm_below(max_grad_norm)
+        if min_relative_decrease is not None:
+            self.assert_loss_decreases(min_relative_decrease)
+        return self
+
+
+_COVERAGE_HINT = ("build the optimizers from the final model (after deepcopy, re-creation or loading), "
+                  "give each parameter to exactly one optimizer, and freeze parameters on purpose "
+                  "(requires_grad_(False)) or pass ignore=.")
 
 
 def _train(

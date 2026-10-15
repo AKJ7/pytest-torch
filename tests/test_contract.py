@@ -162,3 +162,106 @@ def test_plugin_records_the_pinned_devices(pytester):
         """
     )
     pytester.runpytest_subprocess("-p", "no:cacheprovider", "--torch-device=cpu").assert_outcomes(passed=1)
+
+
+# --------------------------------------------------------------------------- #
+# edge cases: aliased outputs, complete state, empty selections
+# --------------------------------------------------------------------------- #
+class ReusedOutputBuffer(nn.Module):
+    """Returns the same tensor object every call, overwritten in place with new values."""
+
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Linear(8, 4)
+        self.out = torch.zeros(4, 4)  # a plain attribute: reused, not model state
+        self.calls = 0
+
+    def forward(self, x):
+        self.calls += 1
+        self.out.copy_(self.lin(x) * self.calls)  # different values on every call
+        return self.out
+
+
+def test_reused_output_buffer_is_not_mistaken_for_determinism():
+    torch.manual_seed(0)
+    report = check_inference_contract(ReusedOutputBuffer().eval(), torch.randn(4, 8),
+                                      checks=["deterministic"], raise_on_failure=False)
+    assert statuses(report) == {"deterministic": "fail"}, report.format()
+
+
+class NonPersistentCounter(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Linear(8, 4)
+        self.register_buffer("seen", torch.zeros(()), persistent=False)  # not in state_dict
+
+    def forward(self, x):
+        self.seen += 1
+        return self.lin(x)
+
+
+class LazyCache(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Linear(8, 4)
+
+    def forward(self, x):
+        if not hasattr(self, "cache"):
+            self.register_buffer("cache", x.mean(0).detach().clone())  # new state during inference
+        return self.lin(x)
+
+
+def test_non_persistent_buffer_mutation_is_detected():
+    report = check_inference_contract(NonPersistentCounter().eval(), torch.randn(4, 8),
+                                      checks=["no_state_mutation"], raise_on_failure=False)
+    assert statuses(report) == {"no_state_mutation": "fail"}
+    assert "seen" in report.format()
+
+
+def test_state_added_during_inference_is_detected():
+    report = check_inference_contract(LazyCache().eval(), torch.randn(4, 8),
+                                      checks=["no_state_mutation"], raise_on_failure=False)
+    assert statuses(report) == {"no_state_mutation": "fail"}
+    assert "added during inference: cache" in report.format()
+
+
+def test_plain_python_attributes_are_outside_the_mutation_check():
+    # The boundary: registered parameters and buffers (persistent or not) are model state;
+    # plain Python attributes, such as this call counter, are not.
+    class Counter(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(8, 4)
+            self.calls = 0
+
+        def forward(self, x):
+            self.calls += 1
+            return self.lin(x)
+
+    report = check_inference_contract(Counter().eval(), torch.randn(4, 8), checks=["no_state_mutation"])
+    assert statuses(report) == {"no_state_mutation": "pass"}
+
+
+class CountingModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Linear(8, 4)
+        self.calls = 0
+
+    def forward(self, x):
+        self.calls += 1
+        return self.lin(x)
+
+
+@pytest.mark.parametrize("selection", [{"checks": []}, {"skip": list(__import__("pytest_torch.contract", fromlist=["CHECKS"]).CHECKS)}])
+def test_an_empty_selection_is_rejected_without_running_the_model(selection):
+    model = CountingModel().eval()
+    with pytest.raises(ValueError, match="no checks selected"):
+        check_inference_contract(model, torch.randn(4, 8), **selection)
+    assert model.calls == 0
+
+
+def test_eval_mode_alone_does_not_run_the_model():
+    model = CountingModel().eval()
+    report = check_inference_contract(model, torch.randn(4, 8), checks=["eval_mode"])
+    assert statuses(report) == {"eval_mode": "pass"} and model.calls == 0

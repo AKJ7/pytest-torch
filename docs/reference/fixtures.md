@@ -8,13 +8,17 @@ The plugin provides these fixtures in every test module; there is nothing to imp
 | [`torch_seed`](#torch_seed) | Seeds `random`, `numpy` and `torch`; yields the seed, printed when the test fails |
 | [`torch_generator`](#torch_generator) | A seeded **CPU** `Generator`: the same seed gives identical values on every device |
 | [`make_tensor`](#make_tensor) | Reproducible tensors, generated on the CPU and moved to the device |
+| [`make_batch`](#make_batch) | Realistic batches: padded token sequences with attention masks, images, seeded data loaders |
 | [`torch_dtype`](#torch_dtype) | Parametrizes the test over dtypes (default float32; `--torch-dtype`, `@pytest.mark.torch_dtypes`) |
 | [`inference_mode`](#inference_mode) | Runs the test under `torch.inference_mode()` |
 | [`golden`](#golden) | Snapshot testing of tensors and nested outputs |
 | [`latency`](#latency) | Median latency with warmup and device sync, with an optional budget marker |
 | [`perf_baseline`](#perf_baseline) | Latency/memory regression checks against a stored baseline |
 | [`metric_baseline`](#metric_baseline) | Dataset metrics compared with a stored baseline and thresholds |
-| [`model_loader`](#model_loader) | Session-cached Hugging Face / timm / torchvision loading |
+| [`model_loader`](#model_loader) | Session-cached Hugging Face / timm / torchvision loading, and tiny random-init versions of Hugging Face architectures |
+| [`lightning_trainer`](#lightning_trainer) | A Lightning `Trainer` set up for tests: the test's device, a few steps, no logs or checkpoints |
+| [`hf_trainer`](#hf_trainer) | A Hugging Face `Trainer` set up for tests: the test's device and seed, the loss logged every step, nothing saved |
+| [`training_runner`](#training_runner) | Short seeded training runs of your own training step, with telemetry, and resume, accumulation and mixed-precision checks |
 | [`model_config`](#model_config) | The current config when a test class has `configs` (e.g. a `ModelSuite` run per config) |
 
 The examples below assume `import pytest`, `import torch` and `from torch import nn`.
@@ -80,6 +84,44 @@ def test_inputs(make_tensor, torch_device):
 default; `high` defaults to 100, or 2 for bools). The default float dtype is float32, or
 `torch_dtype` when the test uses it. Under `--torch-repro-dir`, every tensor is recorded in
 the failure bundle, and `--torch-repro` replays them bit for bit.
+
+## `make_batch`
+
+```python
+def test_mean_pooling_ignores_padding(make_batch, torch_device):
+    embed = nn.Embedding(1000, 16).to(torch_device)
+    batch = make_batch.tokens(4, 12, vocab_size=1000, padding="right")
+    ids, mask = batch["input_ids"], batch["attention_mask"]
+    assert mask[0].all() and not mask[-1].all()       # always a full row and a padded row
+    pooled = (embed(ids) * mask[..., None]).sum(1) / mask.sum(1, keepdim=True)
+    unpadded = ids[-1:, : int(mask[-1].sum())]        # the last row without its padding
+    torch.testing.assert_close(pooled[-1:], embed(unpadded).mean(1))
+
+
+def test_images_and_loader(make_batch):
+    images, labels = make_batch.images(8, 3, 32, labels=10)      # (8, 3, 32, 32) floats, labels < 10
+    raw = make_batch.images(2, 3, 64, uint8=True, layout="nhwc")  # (2, 64, 64, 3) pixels in [0, 255]
+    batches = list(make_batch.loader((images, labels), batch_size=4, shuffle=True))
+    assert len(batches) == 2 and raw.dtype == torch.uint8
+```
+
+`tokens(batch_size, seq_len, vocab_size=1000, padding="right", min_length=None,
+pad_token_id=0, labels=None, token_type_ids=False)` returns `input_ids` and
+`attention_mask` (a dict, as Hugging Face models take them). Lengths vary between
+`min_length` (default half of `seq_len`) and `seq_len`; the first row is always full and the
+last always `min_length` long, so every batch exercises padding. Padding goes `"right"`,
+`"left"` or nowhere (`None`); real tokens never equal `pad_token_id`. `labels=10` adds a
+class per row; `labels="lm"` adds the ids with padding set to -100.
+
+`images(batch_size, channels=3, height=224, width=None, uint8=False, layout="nchw",
+dtype=None, labels=None)` returns normalized floats (about N(0, 1)) or, with `uint8=True`,
+raw pixels; `layout="nhwc"` matches decoded images. `loader(data, batch_size=8,
+shuffle=False, **kwargs)` wraps a dataset, a tensor, a tuple of tensors or a dict of tensors
+in a `DataLoader` whose shuffling follows the test's seed (single-process unless you pass
+`num_workers`).
+
+Everything is drawn through `make_tensor`, so a batch follows `torch_seed`, lands on
+`torch_device`, and is recorded in [failure reproduction bundles](../guides/repro.md).
 
 ## `torch_dtype`
 
@@ -202,6 +244,12 @@ def test_bert(model_loader):
     model = model_loader.hf("bert-base-uncased", auto_class="AutoModel")   # downloads once
     tokenizer = model_loader.hf_tokenizer("bert-base-uncased")
     vit = model_loader.timm("vit_tiny_patch16_224")                        # random init by default
+
+
+def test_llama_architecture(model_loader, make_batch, torch_device):
+    model = model_loader.hf_tiny("Qwen/Qwen2.5-7B", device=torch_device)   # config only: 10M params, mostly vocabulary
+    batch = make_batch.tokens(2, 16, vocab_size=model.config.vocab_size)
+    assert model(**batch).last_hidden_state.shape == (2, 16, 64)
 ```
 
 Session-scoped: each model is built once per test session, keyed by every argument, and
@@ -209,6 +257,120 @@ comes back in eval mode. Cached instances are shared between tests, so `copy.dee
 before mutating one. `hf(name, auto_class=..., dtype=..., device=..., **kwargs)`,
 `timm(name, pretrained=False, ...)` and `torchvision(name, weights=None, ...)` need the
 `hf`, `timm` and `torchvision` extras.
+
+`hf_tiny(name, auto_class="AutoModel", layers=2, hidden_size=64, heads=4, vocab_size=None,
+seed=0, **overrides)` tests a real architecture in about a second on a CPU: it downloads
+only the config (or takes a `PretrainedConfig` or a local folder), shrinks it with
+`shrink_config` and builds a randomly initialized model. Layer counts, widths, attention
+and key/value heads (grouped-query attention stays grouped), feed-forward sizes, expert
+counts and per-layer lists are reduced, in nested configs too; the vocabulary is kept so a
+real tokenizer still fits, unless you pass `vocab_size`. Other keyword arguments set config
+attributes. The weights depend only on `seed`, so they're the same in every run and test
+order. `auto_class` also takes a model class name such as
+`"LlavaForConditionalGeneration"`. Checked on 26 architectures, from BERT, GPT-2 and T5 to
+Llama, Mixtral, Gemma, Whisper, CLIP, Mamba and Llava.
+
+## `training_runner`
+
+```python
+from torch.nn import functional as F
+from pytest_torch import TrainingSetup
+
+
+def make_setup():
+    model = nn.Linear(16, 4)
+    return TrainingSetup(model, torch.optim.SGD(model.parameters(), lr=0.1))
+
+
+def train_step(setup, batch):
+    x, y = batch
+    loss = F.cross_entropy(setup.model(x), y)
+    loss.backward()
+    setup.optimizer.step()
+    setup.optimizer.zero_grad()
+    return loss
+
+
+def test_training(training_runner, make_tensor):
+    batch = (make_tensor(8, 16), make_tensor(8, dtype=torch.long, low=0, high=4))
+    run = training_runner.run(make_setup, batch, train_step, steps=20)
+    run.assert_healthy(min_relative_decrease=0.2)
+    training_runner.assert_resume_equivalent(make_setup, batch, train_step, steps=6)
+```
+
+A `TrainingRunner` bound to the test's `torch_device` and `torch_seed`. Its methods `run`,
+`assert_resume_equivalent`, `assert_accumulation_equivalent` and
+`assert_mixed_precision_training` are the functions of the same names, with `device` and
+`seed` filled in. Each run builds a fresh setup with `make_setup` and moves the model to the
+device. See [Training loops](../guides/training-loops.md).
+
+## `lightning_trainer`
+
+```python
+import lightning.pytorch as pl
+from torch.nn import functional as F
+
+
+class LitClassifier(pl.LightningModule):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 4))
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        loss = F.cross_entropy(self.net(x), y)
+        self.log("train_loss", loss)
+        return loss
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-2)
+
+
+def test_fit(lightning_trainer, make_batch, make_tensor):
+    data = (make_tensor(64, 16), make_tensor(64, dtype=torch.long, low=0, high=4))
+    trainer = lightning_trainer(max_steps=20)
+    trainer.fit(LitClassifier(), make_batch.loader(data, batch_size=16, shuffle=True))
+    assert trainer.global_step == 20
+    assert trainer.callback_metrics["train_loss"] < 1.4
+```
+
+Returns `make(**overrides)`, which builds a `Trainer` on the test's device (`cuda:N` becomes
+`accelerator="gpu", devices=[N]`; XPU is skipped, as Lightning has no accelerator for it)
+with `max_steps=5`, no logger, checkpoints, progress bar, model summary or sanity
+validation, `log_every_n_steps=1` and its files in `tmp_path`. `overrides` are `Trainer`
+arguments. The test is seeded by `torch_seed`, so data order and initialization repeat.
+Lightning's warning about single-process data loaders is silenced. Needs
+`pip install "pytest-torch[lightning]"`.
+
+To run a `LightningModule` under the [training-loop checks](../guides/training-loops.md)
+(telemetry, resume, mixed precision), `from_lightning(make_module)` gives the `make_setup`
+and `step` they take.
+
+## `hf_trainer`
+
+```python
+import copy
+
+
+def test_fine_tuning(hf_trainer, model_loader, make_batch):
+    model = copy.deepcopy(model_loader.hf_tiny(          # cached instances are shared: train a copy
+        "google-bert/bert-base-uncased", auto_class="AutoModelForSequenceClassification", num_labels=2))
+    data = make_batch.tokens(32, 16, vocab_size=model.config.vocab_size, labels=2)
+    trainer = hf_trainer(model, data, max_steps=10, learning_rate=1e-3)
+    trainer.train()
+    losses = [log["loss"] for log in trainer.state.log_history if "loss" in log]
+    assert len(losses) == 10
+```
+
+Returns `make(model, train_dataset=None, eval_dataset=None, trainer_class=None,
+trainer_kwargs=None, **args)`, which builds a `transformers.Trainer` (or `trainer_class`,
+your subclass) with `TrainingArguments` for a test: the test's
+device (`use_cpu` on CPU), `seed` and `data_seed` from `torch_seed`, `max_steps=5`, batch
+size 4, the loss logged every step (`trainer.state.log_history`), nothing saved or
+reported, output in `tmp_path`. `args` override `TrainingArguments`
+(`evaluation_strategy` is renamed for newer transformers); `trainer_kwargs` go to the
+`Trainer` (e.g. `data_collator`). A dict of tensors such as `make_batch.tokens(...)` is
+turned into a dataset of rows. Needs `pip install "pytest-torch[hf]"`.
 
 ## `model_config`
 

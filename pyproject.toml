@@ -5,15 +5,15 @@ build-backend = "uv_build"
 [project]
 name = "pytest-torch"
 # Placeholder: the release workflow sets it from the git tag (v0.3.0 -> 0.3.0) before building.
-version = "1.0.0.dev0"
-description = "pytest plugin for testing PyTorch models: inference contracts, parity, invariance, training sanity"
+version = "1.1.0.dev0"
+description = "pytest plugin for testing PyTorch models: inference contracts, parity, invariance, training loops, benchmarks"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "AKJ7" }]
 requires-python = ">=3.9"
 dependencies = ["pytest>=7.0", "tomli>=1.1; python_version < '3.11'"]
-keywords = ["pytest", "pytorch", "testing", "machine-learning", "deep-learning"]
+keywords = ["pytest", "pytorch", "testing", "machine-learning", "deep-learning", "transformers", "lightning", "benchmark"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Framework :: Pytest",
@@ -43,7 +43,9 @@ torch = ["torch>=2.0"]
 hypothesis = ["hypothesis>=6"]
 # onnxscript: needed by recent torch versions whose default ONNX exporter is dynamo-based
 onnx = ["onnx", "onnxruntime", "onnxscript"]
-hf = ["transformers"]
+# accelerate: needed by the transformers Trainer (hf_trainer fixture)
+hf = ["transformers", "accelerate>=0.26"]
+lightning = ["lightning"]
 timm = ["timm"]
 torchvision = ["torchvision"]
 plots = ["matplotlib"]
@@ -121,7 +123,7 @@ ignore_missing_imports = true  # transformers, timm, onnxruntime, hypothesis are
 # Pytest hooks and fixtures: argument names are fixed by pytest, and fixtures such as
 # torch_seed are requested for their side effect.
 "src/pytest_torch/plugin.py" = ["ARG001"]
-"src/pytest_torch/suite.py" = ["ARG002"]
+"src/pytest_torch/{suite,benchmark}.py" = ["ARG002"]
 "src/pytest_torch/zero_code_tests.py" = ["ARG001"]
 # E402: pytest.importorskip comes first. RUF012: ModelSuite subclasses set its class
 # attributes (checks, check_options, output_spec, ...) as plain values, by design.

@@ -185,6 +185,20 @@ def test_hugging_face_model_from_a_local_config(pytester, tmp_path):
     result.assert_outcomes(passed=5, deselected=2)
 
 
+@pytest.mark.skipif(importlib.util.find_spec("transformers") is None, reason="needs transformers")
+def test_hf_tiny_shrinks_a_full_size_architecture(pytester, tmp_path):
+    from transformers import LlamaConfig
+
+    config_dir = tmp_path / "llama"
+    LlamaConfig(vocab_size=1000).save_pretrained(config_dir)  # 32 layers of width 4096
+    model = resolve(f"hf-tiny:{config_dir}").build()
+    assert model.config.num_hidden_layers == 2 and model.config.hidden_size == 64
+    result = run(pytester, f"--torch-model=hf-tiny:{config_dir}")
+    result.assert_outcomes(passed=5, deselected=2)
+    with pytest.raises(SpecError, match="drop --torch-model-pretrained"):
+        resolve(f"hf-tiny:{config_dir}", pretrained=True)
+
+
 @pytest.mark.skipif(importlib.util.find_spec("transformers") is not None, reason="transformers is installed")
 def test_missing_model_zoo_package_says_how_to_install_it():
     with pytest.raises(SpecError, match=r"transformers is not installed: pip install 'pytest-torch\[hf\]'"):

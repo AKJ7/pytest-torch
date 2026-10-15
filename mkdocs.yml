@@ -69,13 +69,17 @@ nav:
       - Dataset metrics: guides/dataset-metrics.md
       - Checkpoints: guides/checkpoints.md
       - Performance and determinism: guides/performance.md
+      - Benchmark suites: guides/benchmarks.md
       - Failure reproduction: guides/repro.md
   - Generated test suites: guides/model-suite.md
+  - Training:
+      - Training sanity: guides/training.md
+      - Training loops: guides/training-loops.md
   - More:
       - Tolerances: guides/tolerances.md
-      - Training sanity: guides/training.md
       - Recipes: guides/recipes.md
   - Reference:
-      - Command line and markers: reference/cli.md
+      - Command line: reference/cli.md
+      - Markers: reference/markers.md
       - Fixtures: reference/fixtures.md
       - API: reference/api.md

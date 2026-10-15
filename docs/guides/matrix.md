@@ -27,6 +27,17 @@ test_batch_invariance[cuda-float32] PASSED
 - Comparison tolerances follow the dtype of the tensors compared, and are configurable per
   dtype and device in [`pyproject.toml`](tolerances.md).
 
+Known gaps don't need hand-written `skipif`s:
+
+```python
+@pytest.mark.torch_skip_on("mps", reason="float64 isn't supported on MPS")       # other devices still run
+@pytest.mark.torch_xfail_on("xpu", dtype=torch.bfloat16, raises=NotImplementedError)
+@pytest.mark.torch_requires(torch=">=2.4", packages=["onnxruntime"])            # skip with the reason
+```
+
+Expected failures are strict, so a torch release that fixes an operation tells you to drop
+the marker. See [requirements, device gaps and expected failures](../reference/markers.md#devices-and-dtypes).
+
 ## Memory layouts
 
 ```python

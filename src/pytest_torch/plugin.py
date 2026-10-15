@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from . import report as _artifacts, repro as _repro, tolerances as _tolerances
+from . import markers as _markers, report as _artifacts, repro as _repro, tolerances as _tolerances
 from .golden import Golden
 
 
@@ -62,6 +62,19 @@ def pytest_addoption(parser):
         help="Rewrite golden files instead of comparing. "
         "Use with --torch-device=cpu for a portable reference.",
     )
+    # benchmarks
+    group.addoption(
+        "--torch-benchmark",
+        action="store_true",
+        help="Run benchmarks (BenchmarkSuite and @pytest.mark.torch_benchmark tests); "
+        "they are deselected otherwise.",
+    )
+    group.addoption(
+        "--torch-benchmark-json",
+        default=None,
+        metavar="PATH",
+        help="Write the benchmark results of the run to PATH as JSON.",
+    )
     # performance baselines
     group.addoption(
         "--torch-update-perf",
@@ -102,6 +115,13 @@ def pytest_addoption(parser):
         "'none', or a comma-separated list such as 0,1.",
     )
     group.addoption(
+        "--torch-num-threads",
+        default="auto",
+        help="CPU threads per test process: an integer, 'none' (torch's default), or 'auto': "
+        "under pytest-xdist, the CPU cores divided between the workers (unless OMP_NUM_THREADS "
+        "is set); otherwise torch's default.",
+    )
+    group.addoption(
         "--torch-gpu-memory-fraction",
         default="none",
         help="Per-process CUDA memory cap under xdist: 'none', 'auto' (split each GPU "
@@ -126,7 +146,7 @@ def pytest_addoption(parser):
         dest="torch_models",
         default=None,
         metavar="SPEC",
-        help="Test a model with no test file (repeatable): hf:NAME[@AutoClass], timm:NAME, "
+        help="Test a model with no test file (repeatable): hf:NAME[@AutoClass], hf-tiny:NAME, timm:NAME, "
         "torchvision:NAME, package.module:Factory or path/to/file.py:Factory.",
     )
     group.addoption(
@@ -208,6 +228,7 @@ def _save_global_state() -> dict:
         "tolerances": dict(_tolerances._config),
         "repro": dict(_repro._state),
         "artifacts": dict(_artifacts._state),
+        "benchmarks": list(_benchmark_results()),
     }
 
 
@@ -221,12 +242,24 @@ def _restore_global_state(saved: dict) -> None:
     _repro._state.update(saved["repro"])
     _artifacts._state.clear()
     _artifacts._state.update(saved["artifacts"])
+    _benchmark_results()[:] = saved["benchmarks"]
+
+
+def _benchmark_results() -> list:
+    from . import benchmark
+
+    return benchmark.results
 
 
 def pytest_unconfigure(config):
     saved = getattr(config, "_pytest_torch_saved_state", None)
     if saved is not None:
         _restore_global_state(saved)
+    threads = getattr(config, "_pytest_torch_previous_threads", None)
+    if threads is not None:
+        import torch
+
+        torch.set_num_threads(threads)
 
 
 def pytest_configure(config):
@@ -244,8 +277,12 @@ def pytest_configure(config):
         "torch_tolerance(**entries): override default tolerances, keys as in "
         "[tool.pytest_torch.tolerance], e.g. bfloat16=(2e-2, 1e-2)",
         "torch_dtypes(*dtypes): dtypes the `torch_dtype` fixture runs this test with",
+        "torch_benchmark: a benchmark; runs only with --torch-benchmark",
+        "torch_threads(n): number of CPU threads torch uses during this test",
+        *_markers.LINES,
     ):
         config.addinivalue_line("markers", line)
+    _configure_threads(config)
     _configure_tolerances(config)
     _configure_repro(config)
     _configure_zero_code(config)
@@ -253,6 +290,81 @@ def pytest_configure(config):
     # Workers forward their reports to the controller, which prints the annotations.
     if config.getoption("torch_github_annotations") and not hasattr(config, "workerinput"):
         config.pluginmanager.register(_GithubAnnotations(config), "torch-github-annotations")
+
+
+def _cpu_count() -> int:
+    import os
+
+    try:
+        return len(os.sched_getaffinity(0))  # the cores this process may use (containers, taskset)
+    except (AttributeError, OSError):
+        return os.cpu_count() or 1
+
+
+def _thread_count(value: str) -> int | None:
+    """Threads for ``--torch-num-threads``; ``None`` leaves torch's default."""
+    import os
+
+    from .parallel import worker_count, worker_index
+
+    if value == "none":
+        return None
+    if value == "auto":
+        if worker_index() is None or worker_count() < 2 or "OMP_NUM_THREADS" in os.environ:
+            return None
+        return max(1, _cpu_count() // worker_count())
+    try:
+        threads = int(value)
+    except ValueError:
+        threads = 0
+    if threads < 1:
+        raise pytest.UsageError(f"--torch-num-threads must be a positive integer, 'auto' or 'none', got {value!r}")
+    return threads
+
+
+def _configure_threads(config) -> None:
+    threads = _thread_count(config.getoption("torch_num_threads"))
+    if threads is None:
+        return
+    import os
+
+    import torch
+
+    config._pytest_torch_previous_threads = torch.get_num_threads()
+    torch.set_num_threads(threads)
+    os.environ["OMP_NUM_THREADS"] = str(threads)  # subprocesses (pytester, compile workers)
+    config._pytest_torch_threads = threads
+
+
+@pytest.fixture(autouse=True)
+def _torch_mode_markers(request):
+    if not any(request.node.get_closest_marker(name) for name in _markers.MODE_MARKERS):
+        yield
+        return
+    import contextlib
+
+    with contextlib.ExitStack() as stack:
+        _markers.mode_contexts(request, stack)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _torch_threads_marker(request):
+    marker = request.node.get_closest_marker("torch_threads")
+    if marker is None:
+        yield
+        return
+    import torch
+
+    threads = marker.args[0] if marker.args else marker.kwargs.get("n")
+    if not isinstance(threads, int) or threads < 1:
+        raise pytest.UsageError(f"@pytest.mark.torch_threads needs a positive integer, got {threads!r}")
+    previous = torch.get_num_threads()
+    torch.set_num_threads(threads)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(previous)
 
 
 def _configure_tolerances(config) -> None:
@@ -363,6 +475,15 @@ def _matches_bundle(item, bundle: dict) -> bool:
 def pytest_collection_modifyitems(session, config, items):
     from . import _session
 
+    _markers.apply_device_markers(items)
+    _markers.wrap_memory_markers(items)
+
+    if not config.getoption("torch_benchmark"):  # benchmarks are slow: opt in
+        benchmarks = [i for i in items if i.get_closest_marker("torch_benchmark") is not None]
+        if benchmarks:
+            config.hook.pytest_deselected(items=benchmarks)
+            items[:] = [i for i in items if i.get_closest_marker("torch_benchmark") is None]
+
     if _session.model_specs:  # zero-code tests: test_builds and the selected checks
         from . import zero_code_tests
 
@@ -418,6 +539,9 @@ def pytest_report_header(config):
         lines += ["pytest-torch: " + line for line in _repro.describe(bundle)]
     from . import _session
 
+    threads = getattr(config, "_pytest_torch_threads", None)
+    if threads is not None:
+        lines.append(f"pytest-torch: {threads} CPU thread(s) per process (--torch-num-threads)")
     if _session.model_specs:
         weights = "pretrained" if _session.model_pretrained else "random-init"
         lines.append(f"pytest-torch: testing {', '.join(_session.model_specs)} ({weights}); "
@@ -531,6 +655,11 @@ def pytest_generate_tests(metafunc):
                              indirect=True)
     if "torch_device" in metafunc.fixturenames:
         metafunc.parametrize("torch_device", _devices(metafunc.config), indirect=True)
+    if "benchmark_case" in metafunc.fixturenames and metafunc.cls is not None:
+        from .benchmark import cases
+
+        matrix = cases(metafunc.cls)
+        metafunc.parametrize("benchmark_case", matrix, ids=[c.id for c in matrix])
     if "torch_dtype" in metafunc.fixturenames:
         metafunc.parametrize("torch_dtype", _dtypes(metafunc), indirect=True)
 
@@ -748,6 +877,19 @@ def inference_mode():
         yield
 
 
+@pytest.fixture
+def make_batch(make_tensor, torch_seed, torch_device):
+    """Realistic synthetic batches on ``torch_device``, reproducible from the test's seed:
+
+    ``make_batch.tokens(4, 32, vocab_size=1000)``   -> input_ids + attention_mask, mixed lengths
+    ``make_batch.images(8, 3, 224, labels=10)``     -> (images, labels)
+    ``make_batch.loader(dataset, batch_size=8, shuffle=True)`` -> seeded DataLoader
+    """
+    from .data import BatchFactory
+
+    return BatchFactory(make_tensor, seed=torch_seed, device=torch_device)
+
+
 @pytest.fixture(scope="session")
 def model_loader():
     """``ModelLoader`` with a per-session cache: ``model_loader.hf(...)``, ``.timm(...)``,
@@ -769,6 +911,57 @@ def golden(request) -> Golden:
         name = getattr(request.node, "originalname", request.node.name)
     path = request.node.path.parent / "__golden__" / f"{name}.pt"
     return Golden(path, update=request.config.getoption("torch_update_golden"))
+
+
+# --------------------------------------------------------------------------- #
+# Training loops
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def training_runner(torch_seed, torch_device):
+    """A :class:`~pytest_torch.TrainingRunner`: short, seeded training runs on
+    ``torch_device`` with telemetry, and resume, accumulation and mixed-precision checks.
+
+    ``training_runner.run(make_setup, data, step, steps=20)`` -> ``TrainingRun``
+    """
+    from .training_loop import TrainingRunner
+
+    return TrainingRunner(device=torch_device, seed=torch_seed)
+
+
+@pytest.fixture
+def lightning_trainer(torch_seed, torch_device, tmp_path):
+    """Return ``make(**overrides)`` -> a Lightning ``Trainer`` for tests: the test's device,
+    5 steps, no logger, checkpoints, progress bar or sanity validation, files in
+    ``tmp_path``. ``overrides`` are ``Trainer`` arguments (e.g. ``max_steps=20``)."""
+    import warnings
+
+    from .frameworks import _lightning, lightning_trainer_kwargs
+
+    def make(**overrides):
+        return _lightning().Trainer(**{**lightning_trainer_kwargs(torch_device, tmp_path / "lightning"),
+                                       **overrides})
+
+    with warnings.catch_warnings():  # single-process loaders are what tests want
+        warnings.filterwarnings("ignore", message=".*does not have many workers.*")
+        yield make
+
+
+@pytest.fixture
+def hf_trainer(torch_seed, torch_device, tmp_path):
+    """Return ``make(model, train_dataset=None, eval_dataset=None, trainer_class=None,
+    trainer_kwargs=None, **args)`` -> a Hugging Face ``Trainer`` (or ``trainer_class``, your
+    subclass) for tests: the test's device and seed, 5 steps, the loss logged every step,
+    nothing saved or reported. ``args`` override ``TrainingArguments``; a dict of tensors
+    (``make_batch.tokens(...)``) is a dataset."""
+    from .frameworks import _transformers, as_dataset, hf_training_arguments
+
+    def make(model, train_dataset=None, eval_dataset=None, trainer_class=None, trainer_kwargs=None, **args):
+        arguments = hf_training_arguments(torch_device, tmp_path / "hf-trainer", seed=torch_seed, **args)
+        cls = trainer_class or _transformers().Trainer
+        return cls(model=model, args=arguments, train_dataset=as_dataset(train_dataset),
+                   eval_dataset=as_dataset(eval_dataset), **(trainer_kwargs or {}))
+
+    return make
 
 
 # --------------------------------------------------------------------------- #
@@ -868,3 +1061,23 @@ def metric_baseline(request):
         return result
 
     return check
+
+
+# --------------------------------------------------------------------------- #
+# Benchmark report
+# --------------------------------------------------------------------------- #
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    from .benchmark import format_table, results
+
+    if not results:
+        return
+    terminalreporter.section("pytest-torch benchmarks")
+    for line in format_table(results):
+        terminalreporter.write_line(line)
+    path = config.getoption("torch_benchmark_json")
+    if path:
+        import json
+
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps([r.as_dict() for r in results], indent=2) + "\n", encoding="utf-8")
+        terminalreporter.write_line(f"benchmark results written to {path}")
