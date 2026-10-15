@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "pytest-torch"
 # Placeholder: the release workflow sets it from the git tag (v0.3.0 -> 0.3.0) before building.
-version = "1.1.0.dev0"
+version = "1.1.1.dev0"
 description = "pytest plugin for testing PyTorch models: inference contracts, parity, invariance, training loops, benchmarks"
 readme = "README.md"
 license = "MIT"

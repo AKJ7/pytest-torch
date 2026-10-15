@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.1
+
+A fix for `--torch-num-threads=auto` under pytest-xdist: it now leaves a thread count you
+set with `MKL_NUM_THREADS` alone, as it already did for `OMP_NUM_THREADS`.
+
+### Fixed
+
+- `--torch-num-threads=auto` also leaves the thread count alone when `MKL_NUM_THREADS` is set,
+  not only `OMP_NUM_THREADS`: torch gives `MKL_NUM_THREADS` precedence, so it's your setting
+  too. An explicit count now sets both variables for subprocesses.
+- The test of that behavior no longer depends on how torch resolves the two variables on
+  the machine running it; it failed on CI runners that set `MKL_NUM_THREADS`.
+
 ## 1.1.0
 
 Testing training code, not just models. You can now run your own training step, checkpoint

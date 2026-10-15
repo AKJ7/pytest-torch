@@ -20,7 +20,7 @@ All options are in the `pytest-torch` group of `pytest --help`. For markers, see
 | `--torch-benchmark` | Run [benchmark suites](../guides/benchmarks.md) (deselected otherwise) and print the benchmark report |
 | `--torch-benchmark-json=PATH` | Also write the benchmark results as JSON |
 | `--torch-xdist-gpus` | Under xdist: CUDA or XPU GPUs to spread workers over: `auto`, `none`, or e.g. `0,1` |
-| `--torch-num-threads` | CPU threads per test process: an integer, `none`, or `auto` (default): under pytest-xdist, the cores divided between the workers unless `OMP_NUM_THREADS` is set; otherwise torch's default |
+| `--torch-num-threads` | CPU threads per test process: an integer, `none`, or `auto` (default): under pytest-xdist, the cores divided between the workers unless `OMP_NUM_THREADS` or `MKL_NUM_THREADS` is set; otherwise torch's default |
 | `--torch-gpu-memory-fraction` | Per-process CUDA memory cap under xdist: `none`, `auto` or a float |
 | `--torch-update-metrics` | Record metric baselines (`metric_baseline`) instead of comparing |
 | `--torch-metrics-strict` | Fail (instead of skip) when a metric baseline is missing |
