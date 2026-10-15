@@ -146,3 +146,5 @@ Everything below is importable from `pytest_torch` directly, e.g.
 ::: pytest_torch.integrations.shrink_config
 
 ::: pytest_torch.data.BatchFactory
+
+::: pytest_torch.frameworks.from_lightning

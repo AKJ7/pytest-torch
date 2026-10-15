@@ -43,7 +43,9 @@ torch = ["torch>=2.0"]
 hypothesis = ["hypothesis>=6"]
 # onnxscript: needed by recent torch versions whose default ONNX exporter is dynamo-based
 onnx = ["onnx", "onnxruntime", "onnxscript"]
-hf = ["transformers"]
+# accelerate: needed by the transformers Trainer (hf_trainer fixture)
+hf = ["transformers", "accelerate>=0.26"]
+lightning = ["lightning"]
 timm = ["timm"]
 torchvision = ["torchvision"]
 plots = ["matplotlib"]

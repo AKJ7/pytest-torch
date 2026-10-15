@@ -194,6 +194,7 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | Frozen parameters stay frozen through real optimizer steps, including BatchNorm statistics and weight decay | `assert_frozen` |
 | Short seeded runs of your own training step (custom losses, several optimizers) with per-step telemetry: non-finite values, exploding gradients, skipped updates, unexpected learning rates | `training_runner` fixture, `run_training` → `TrainingRun` of `StepRecord`s, `TrainingSetup`, `standard_step` |
 | Every trainable parameter is in exactly one optimizer, and the optimizer belongs to this copy of the model | `assert_optimizer_coverage` |
+| Lightning and Hugging Face `Trainer`s set up for tests (test's device and seed, a few steps, no logs or checkpoints); `LightningModule`s under the training-loop checks | `lightning_trainer`, `hf_trainer` fixtures, `from_lightning` |
 | Resuming from a checkpoint reproduces uninterrupted training, naming the missing optimizer, scheduler, scaler or RNG state | `assert_resume_equivalent` → `ResumeReport`, `save_training_state`, `load_training_state` |
 | Gradient accumulation matches one full-batch step: loss scaling, gradient resets, step timing | `assert_accumulation_equivalent`, `split_batch` |
 | Mixed-precision training uses the GradScaler correctly and doesn't keep overflowing | `assert_mixed_precision_training` |
@@ -231,7 +232,8 @@ registers itself through pytest's `pytest11` entry point, and importing it never
 |---|---|---|
 | `hypothesis` | `hypothesis` | `pytest_torch.strategies` |
 | `onnx` | `onnx`, `onnxruntime`, `onnxscript` | `assert_onnx_parity` |
-| `hf` | `transformers` | `ModelLoader.hf`, `assert_generation_equal` with HF models |
+| `hf` | `transformers`, `accelerate` | `ModelLoader.hf`, `hf_tiny`, `assert_generation_equal` with HF models, the `hf_trainer` fixture |
+| `lightning` | `lightning` | the `lightning_trainer` fixture, `from_lightning` |
 | `timm`, `torchvision` | the respective package | `ModelLoader.timm`, `ModelLoader.torchvision` |
 | `plots` | `matplotlib` | mismatch heatmaps (`--torch-failure-artifacts`) |
 
@@ -246,7 +248,7 @@ comment: a one-line bug that makes the test fail.
 | One prediction | [`test_output_specs.py`](examples/test_output_specs.py), [`test_metamorphic.py`](examples/test_metamorphic.py), [`test_unusual_inputs.py`](examples/test_unusual_inputs.py), [`test_dtype_matrix.py`](examples/test_dtype_matrix.py), [`test_property_based.py`](examples/test_property_based.py) |
 | Model changes | [`test_reimplementation.py`](examples/test_reimplementation.py), [`test_deployment.py`](examples/test_deployment.py), [`test_streaming.py`](examples/test_streaming.py) |
 | Releases | [`test_dataset_metrics.py`](examples/test_dataset_metrics.py), [`test_checkpoints.py`](examples/test_checkpoints.py), [`test_benchmarks.py`](examples/test_benchmarks.py), [`test_failure_repro.py`](examples/test_failure_repro.py), [`test_tiny_classifier.py`](examples/test_tiny_classifier.py) |
-| More | [`test_training_sanity.py`](examples/test_training_sanity.py), [`test_training_loops.py`](examples/test_training_loops.py), [`test_nondeterminism.py`](examples/test_nondeterminism.py) |
+| More | [`test_training_sanity.py`](examples/test_training_sanity.py), [`test_training_loops.py`](examples/test_training_loops.py), [`test_hf_trainer.py`](examples/test_hf_trainer.py), [`test_nondeterminism.py`](examples/test_nondeterminism.py) |
 
 [`examples/integration/`](examples/integration/) has four small but realistic projects, laid
 out like real repositories and tested end to end: a transformer

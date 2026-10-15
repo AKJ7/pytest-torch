@@ -16,6 +16,8 @@ The plugin provides these fixtures in every test module; there is nothing to imp
 | [`perf_baseline`](#perf_baseline) | Latency/memory regression checks against a stored baseline |
 | [`metric_baseline`](#metric_baseline) | Dataset metrics compared with a stored baseline and thresholds |
 | [`model_loader`](#model_loader) | Session-cached Hugging Face / timm / torchvision loading, and tiny random-init versions of Hugging Face architectures |
+| [`lightning_trainer`](#lightning_trainer) | A Lightning `Trainer` set up for tests: the test's device, a few steps, no logs or checkpoints |
+| [`hf_trainer`](#hf_trainer) | A Hugging Face `Trainer` set up for tests: the test's device and seed, the loss logged every step, nothing saved |
 | [`training_runner`](#training_runner) | Short seeded training runs of your own training step, with telemetry, and resume, accumulation and mixed-precision checks |
 | [`model_config`](#model_config) | The current config when a test class has `configs` (e.g. a `ModelSuite` run per config) |
 
@@ -301,6 +303,74 @@ A `TrainingRunner` bound to the test's `torch_device` and `torch_seed`. Its meth
 `assert_mixed_precision_training` are the functions of the same names, with `device` and
 `seed` filled in. Each run builds a fresh setup with `make_setup` and moves the model to the
 device. See [Training loops](../guides/training-loops.md).
+
+## `lightning_trainer`
+
+```python
+import lightning.pytorch as pl
+from torch.nn import functional as F
+
+
+class LitClassifier(pl.LightningModule):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 4))
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        loss = F.cross_entropy(self.net(x), y)
+        self.log("train_loss", loss)
+        return loss
+
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-2)
+
+
+def test_fit(lightning_trainer, make_batch, make_tensor):
+    data = (make_tensor(64, 16), make_tensor(64, dtype=torch.long, low=0, high=4))
+    trainer = lightning_trainer(max_steps=20)
+    trainer.fit(LitClassifier(), make_batch.loader(data, batch_size=16, shuffle=True))
+    assert trainer.global_step == 20
+    assert trainer.callback_metrics["train_loss"] < 1.4
+```
+
+Returns `make(**overrides)`, which builds a `Trainer` on the test's device (`cuda:N` becomes
+`accelerator="gpu", devices=[N]`; XPU is skipped, as Lightning has no accelerator for it)
+with `max_steps=5`, no logger, checkpoints, progress bar, model summary or sanity
+validation, `log_every_n_steps=1` and its files in `tmp_path`. `overrides` are `Trainer`
+arguments. The test is seeded by `torch_seed`, so data order and initialization repeat.
+Lightning's warning about single-process data loaders is silenced. Needs
+`pip install "pytest-torch[lightning]"`.
+
+To run a `LightningModule` under the [training-loop checks](../guides/training-loops.md)
+(telemetry, resume, mixed precision), `from_lightning(make_module)` gives the `make_setup`
+and `step` they take.
+
+## `hf_trainer`
+
+```python
+import copy
+
+
+def test_fine_tuning(hf_trainer, model_loader, make_batch):
+    model = copy.deepcopy(model_loader.hf_tiny(          # cached instances are shared: train a copy
+        "google-bert/bert-base-uncased", auto_class="AutoModelForSequenceClassification", num_labels=2))
+    data = make_batch.tokens(32, 16, vocab_size=model.config.vocab_size, labels=2)
+    trainer = hf_trainer(model, data, max_steps=10, learning_rate=1e-3)
+    trainer.train()
+    losses = [log["loss"] for log in trainer.state.log_history if "loss" in log]
+    assert len(losses) == 10
+```
+
+Returns `make(model, train_dataset=None, eval_dataset=None, trainer_class=None,
+trainer_kwargs=None, **args)`, which builds a `transformers.Trainer` (or `trainer_class`,
+your subclass) with `TrainingArguments` for a test: the test's
+device (`use_cpu` on CPU), `seed` and `data_seed` from `torch_seed`, `max_steps=5`, batch
+size 4, the loss logged every step (`trainer.state.log_history`), nothing saved or
+reported, output in `tmp_path`. `args` override `TrainingArguments`
+(`evaluation_strategy` is renamed for newer transformers); `trainer_kwargs` go to the
+`Trainer` (e.g. `data_collator`). A dict of tensors such as `make_batch.tokens(...)` is
+turned into a dataset of rows. Needs `pip install "pytest-torch[hf]"`.
 
 ## `model_config`
 

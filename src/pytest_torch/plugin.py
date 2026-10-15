@@ -928,6 +928,42 @@ def training_runner(torch_seed, torch_device):
     return TrainingRunner(device=torch_device, seed=torch_seed)
 
 
+@pytest.fixture
+def lightning_trainer(torch_seed, torch_device, tmp_path):
+    """Return ``make(**overrides)`` -> a Lightning ``Trainer`` for tests: the test's device,
+    5 steps, no logger, checkpoints, progress bar or sanity validation, files in
+    ``tmp_path``. ``overrides`` are ``Trainer`` arguments (e.g. ``max_steps=20``)."""
+    import warnings
+
+    from .frameworks import _lightning, lightning_trainer_kwargs
+
+    def make(**overrides):
+        return _lightning().Trainer(**{**lightning_trainer_kwargs(torch_device, tmp_path / "lightning"),
+                                       **overrides})
+
+    with warnings.catch_warnings():  # single-process loaders are what tests want
+        warnings.filterwarnings("ignore", message=".*does not have many workers.*")
+        yield make
+
+
+@pytest.fixture
+def hf_trainer(torch_seed, torch_device, tmp_path):
+    """Return ``make(model, train_dataset=None, eval_dataset=None, trainer_class=None,
+    trainer_kwargs=None, **args)`` -> a Hugging Face ``Trainer`` (or ``trainer_class``, your
+    subclass) for tests: the test's device and seed, 5 steps, the loss logged every step,
+    nothing saved or reported. ``args`` override ``TrainingArguments``; a dict of tensors
+    (``make_batch.tokens(...)``) is a dataset."""
+    from .frameworks import _transformers, as_dataset, hf_training_arguments
+
+    def make(model, train_dataset=None, eval_dataset=None, trainer_class=None, trainer_kwargs=None, **args):
+        arguments = hf_training_arguments(torch_device, tmp_path / "hf-trainer", seed=torch_seed, **args)
+        cls = trainer_class or _transformers().Trainer
+        return cls(model=model, args=arguments, train_dataset=as_dataset(train_dataset),
+                   eval_dataset=as_dataset(eval_dataset), **(trainer_kwargs or {}))
+
+    return make
+
+
 # --------------------------------------------------------------------------- #
 # Latency and performance baselines
 # --------------------------------------------------------------------------- #

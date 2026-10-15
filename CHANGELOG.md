@@ -59,6 +59,17 @@
 - `--torch-num-threads` (default `auto`): under pytest-xdist, each worker uses its share of
   the CPU cores instead of one thread per core, unless `OMP_NUM_THREADS` is set. An integer
   sets the count everywhere; `@pytest.mark.torch_threads(n)` sets it for one test.
+- `lightning_trainer` and `hf_trainer` fixtures: a Lightning `Trainer` or a Hugging Face
+  `Trainer` set up for tests: the test's device and seed, 5 steps, no loggers, reports or
+  checkpoints, files in `tmp_path`, any argument overridable. `hf_trainer` logs the loss
+  every step, accepts `make_batch.tokens(...)` as a dataset and builds your `Trainer`
+  subclass with `trainer_class=`. See `examples/test_hf_trainer.py`.
+- `from_lightning(make_module)`: the `make_setup` and `step` of a `LightningModule` with
+  automatic optimization, for `training_runner` and the training-loop checks.
+- The `hf` extra adds `accelerate` (needed by the Hugging Face `Trainer`); new `lightning`
+  extra.
+- CI: an `integrations` job runs the tests with transformers, timm, torchvision and
+  Lightning installed; until now, the tests that need them were skipped in CI.
 - Markers:
   - `torch_requires(...)`: skip unless devices (`cuda`, `xpu`, `mps`, `gpu`), versions
     (`torch`, `python` specifiers), `compile`, `gpu_memory_gb`, `cuda_capability` and

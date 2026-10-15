@@ -68,6 +68,23 @@ jobs:
           path: failure-artifacts
           if-no-files-found: ignore
 
+  # Model zoos and training frameworks (optional extras), at versions known to work together:
+  # Hugging Face loading, hf_tiny, zero-code testing, the Lightning and HF trainer fixtures.
+  integrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv
+      - name: Install torch and the integrations
+        run: >
+          uv pip install "torch==2.6.*" "torchvision==0.21.*" timm "transformers==4.49.*" "accelerate>=0.26"
+          lightning --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+      - run: uv pip install -e . pytest pytest-xdist hypothesis matplotlib pyyaml
+      - run: uv run --no-sync pytest tests examples -ra -m "not slow" --torch-github-annotations
+
   lint:
     runs-on: ubuntu-latest
     steps:

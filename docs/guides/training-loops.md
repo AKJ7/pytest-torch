@@ -263,6 +263,44 @@ Clipping is detected when called as `torch.nn.utils.clip_grad_norm_(...)` (or `n
 a function imported with `from torch.nn.utils import clip_grad_norm_` before the check runs
 isn't seen. A GradScaler for the CPU (`torch.amp.GradScaler("cpu")`) needs torch 2.3+.
 
+## Lightning and the Hugging Face Trainer
+
+A `LightningModule` runs under these checks through `from_lightning`, which builds the
+module, calls its `configure_optimizers()` and steps like Lightning's automatic
+optimization (`training_step`, backward, optimizer step, zero grad, `"step"`-interval
+schedulers):
+
+```python
+from pytest_torch import from_lightning
+
+
+def test_lightning_module(training_runner):
+    make_setup, step = from_lightning(lambda: LitClassifier(lr=1e-3))
+    training_runner.run(make_setup, batches, step, steps=20).assert_healthy()
+    training_runner.assert_resume_equivalent(make_setup, batches, step)
+```
+
+A step-based run has no epochs, so `"epoch"`-interval schedulers don't step unless you
+pass `epoch_length` (steps per epoch). `training_step` runs without a `Trainer`: `self.log`
+is ignored and `self.global_step` reads 0. Steps that need `self.trainer`, and manual
+optimization, need a real `Trainer`: the
+[`lightning_trainer`](../reference/fixtures.md#lightning_trainer) fixture gives one set up
+for tests.
+
+Hugging Face models compute their own loss when the batch has labels, so a `loss_fn` is
+enough, and [`hf_trainer`](../reference/fixtures.md#hf_trainer) gives a `Trainer` set up
+for tests:
+
+```python
+run = training_runner.run(make_setup, batches, loss_fn=lambda model, batch: model(**batch).loss)
+```
+
+[`examples/test_hf_trainer.py`](https://github.com/AKJ7/pytest-torch/blob/main/examples/test_hf_trainer.py)
+tests a fine-tuning setup with the Hugging Face `Trainer`: the loss goes down, evaluation
+metrics are in range, a `Trainer` subclass applies its class weights, the optimizer's
+weight-decay groups cover every parameter once, gradient accumulation matches a larger
+batch, and resuming from a checkpoint reproduces uninterrupted training exactly.
+
 ## Example
 
 [`examples/test_training_loops.py`](https://github.com/AKJ7/pytest-torch/blob/main/examples/test_training_loops.py)

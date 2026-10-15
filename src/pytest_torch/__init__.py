@@ -63,6 +63,7 @@ _EXPORTS = {
     "StepRecord": "training",
     # training loops
     "TrainingSetup": "training_loop",
+    "from_lightning": "frameworks",
     # synthetic data and tiny models
     "BatchFactory": "data",
     "shrink_config": "integrations",
@@ -152,6 +153,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .devices import available_devices
     from .divergence import DivergenceReport, LayerDiff, localize_divergence
     from .evaluation import MetricResult, evaluate, evaluate_detailed, paired_difference
+    from .frameworks import from_lightning
     from .integrations import ModelLoader, shrink_config
     from .invariance import (
         assert_equivariant,
