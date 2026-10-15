@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.1.1
+
+A fix for `--torch-num-threads=auto` under pytest-xdist: it now leaves a thread count you
+set with `MKL_NUM_THREADS` alone, as it already did for `OMP_NUM_THREADS`.
 
 ### Fixed
 
