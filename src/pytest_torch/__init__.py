@@ -60,6 +60,21 @@ _EXPORTS = {
     "assert_loss_decreases": "training",
     "assert_overfits_one_batch": "training",
     "TrainingRun": "training",
+    "StepRecord": "training",
+    # training loops
+    "TrainingSetup": "training_loop",
+    "TrainingRunner": "training_loop",
+    "run_training": "training_loop",
+    "standard_step": "training_loop",
+    "split_batch": "training_loop",
+    "assert_optimizer_coverage": "training_loop",
+    "assert_resume_equivalent": "training_loop",
+    "ResumeReport": "training_loop",
+    "training_state": "training_loop",
+    "save_training_state": "training_loop",
+    "load_training_state": "training_loop",
+    "assert_accumulation_equivalent": "training_loop",
+    "assert_mixed_precision_training": "training_loop",
     # generated test suites
     "ModelSuite": "suite",
     # performance
@@ -173,6 +188,7 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
     from .sync import assert_no_host_sync, forbid_host_sync
     from .tolerances import tolerance_overrides
     from .training import (
+        StepRecord,
         TrainingRun,
         assert_all_params_receive_grad,
         assert_frozen,
@@ -180,6 +196,21 @@ if TYPE_CHECKING:  # static analysis only: nothing here runs at import time
         assert_gradients_finite,
         assert_loss_decreases,
         assert_overfits_one_batch,
+    )
+    from .training_loop import (
+        ResumeReport,
+        TrainingRunner,
+        TrainingSetup,
+        assert_accumulation_equivalent,
+        assert_mixed_precision_training,
+        assert_optimizer_coverage,
+        assert_resume_equivalent,
+        load_training_state,
+        run_training,
+        save_training_state,
+        split_batch,
+        standard_step,
+        training_state,
     )
     from .utils import deterministic_algorithms, is_compile_supported, seed_everything
 

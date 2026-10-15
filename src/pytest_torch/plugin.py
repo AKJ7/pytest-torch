@@ -805,6 +805,21 @@ def golden(request) -> Golden:
 
 
 # --------------------------------------------------------------------------- #
+# Training loops
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def training_runner(torch_seed, torch_device):
+    """A :class:`~pytest_torch.TrainingRunner`: short, seeded training runs on
+    ``torch_device`` with telemetry, and resume, accumulation and mixed-precision checks.
+
+    ``training_runner.run(make_setup, data, step, steps=20)`` -> ``TrainingRun``
+    """
+    from .training_loop import TrainingRunner
+
+    return TrainingRunner(device=torch_device, seed=torch_seed)
+
+
+# --------------------------------------------------------------------------- #
 # Latency and performance baselines
 # --------------------------------------------------------------------------- #
 @pytest.fixture

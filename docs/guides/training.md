@@ -1,6 +1,8 @@
 # Training sanity
 
-Catch a broken training setup in seconds instead of after a day of GPU time. Every helper
+Catch a broken training setup in seconds instead of after a day of GPU time. These helpers
+use a standard loop; to test your own training step, checkpoints, gradient accumulation or
+mixed precision, see [Training loops](training-loops.md). Every helper
 takes `(model, inputs, loss_fn)`, where `loss_fn(output)` returns a scalar tensor: close
 over your targets.
 

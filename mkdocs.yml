@@ -72,9 +72,11 @@ nav:
       - Benchmark suites: guides/benchmarks.md
       - Failure reproduction: guides/repro.md
   - Generated test suites: guides/model-suite.md
+  - Training:
+      - Training sanity: guides/training.md
+      - Training loops: guides/training-loops.md
   - More:
       - Tolerances: guides/tolerances.md
-      - Training sanity: guides/training.md
       - Recipes: guides/recipes.md
   - Reference:
       - Command line and markers: reference/cli.md

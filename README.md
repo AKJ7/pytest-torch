@@ -181,13 +181,18 @@ Every feature, grouped by the question it answers. Each group links to its guide
 | Golden (snapshot) files for tensors and nested outputs | `golden` fixture, `@pytest.mark.torch_golden`, `--torch-update-golden` |
 | Failure reproduction bundles: record a failing test's seed, inputs and environment, replay it anywhere | `--torch-repro-dir`, `--torch-repro`, `--torch-repro-max-weights-mb`, `record_repro`, `load_repro` |
 
-**Training** · [training sanity](https://akj7.github.io/pytest-torch/guides/training/)
+**Training** · [training sanity](https://akj7.github.io/pytest-torch/guides/training/), [training loops](https://akj7.github.io/pytest-torch/guides/training-loops/)
 
 | Feature | API |
 |---|---|
 | Finite gradients, every parameter learns, loss decreases, one batch overfits | `assert_gradients_finite`, `assert_all_params_receive_grad`, `assert_loss_decreases`, `assert_overfits_one_batch` → `TrainingRun` |
 | Custom backward passes against finite differences | `assert_gradcheck` |
 | Frozen parameters stay frozen through real optimizer steps, including BatchNorm statistics and weight decay | `assert_frozen` |
+| Short seeded runs of your own training step (custom losses, several optimizers) with per-step telemetry: non-finite values, exploding gradients, skipped updates, unexpected learning rates | `training_runner` fixture, `run_training` → `TrainingRun` of `StepRecord`s, `TrainingSetup`, `standard_step` |
+| Every trainable parameter is in exactly one optimizer, and the optimizer belongs to this copy of the model | `assert_optimizer_coverage` |
+| Resuming from a checkpoint reproduces uninterrupted training, naming the missing optimizer, scheduler, scaler or RNG state | `assert_resume_equivalent` → `ResumeReport`, `save_training_state`, `load_training_state` |
+| Gradient accumulation matches one full-batch step: loss scaling, gradient resets, step timing | `assert_accumulation_equivalent`, `split_batch` |
+| Mixed-precision training uses the GradScaler correctly and doesn't keep overflowing | `assert_mixed_precision_training` |
 
 **Determinism, configuration and CI** · [performance and determinism](https://akj7.github.io/pytest-torch/guides/performance/), [tolerances](https://akj7.github.io/pytest-torch/guides/tolerances/), [reference](https://akj7.github.io/pytest-torch/reference/cli/)
 
@@ -234,7 +239,7 @@ comment: a one-line bug that makes the test fail.
 | One prediction | [`test_output_specs.py`](examples/test_output_specs.py), [`test_metamorphic.py`](examples/test_metamorphic.py), [`test_unusual_inputs.py`](examples/test_unusual_inputs.py), [`test_dtype_matrix.py`](examples/test_dtype_matrix.py), [`test_property_based.py`](examples/test_property_based.py) |
 | Model changes | [`test_reimplementation.py`](examples/test_reimplementation.py), [`test_deployment.py`](examples/test_deployment.py), [`test_streaming.py`](examples/test_streaming.py) |
 | Releases | [`test_dataset_metrics.py`](examples/test_dataset_metrics.py), [`test_checkpoints.py`](examples/test_checkpoints.py), [`test_benchmarks.py`](examples/test_benchmarks.py), [`test_failure_repro.py`](examples/test_failure_repro.py), [`test_tiny_classifier.py`](examples/test_tiny_classifier.py) |
-| More | [`test_training_sanity.py`](examples/test_training_sanity.py), [`test_nondeterminism.py`](examples/test_nondeterminism.py) |
+| More | [`test_training_sanity.py`](examples/test_training_sanity.py), [`test_training_loops.py`](examples/test_training_loops.py), [`test_nondeterminism.py`](examples/test_nondeterminism.py) |
 
 [`examples/integration/`](examples/integration/) has four small but realistic projects, laid
 out like real repositories and tested end to end: a transformer

@@ -81,12 +81,26 @@ Everything below is importable from `pytest_torch` directly, e.g.
     options:
       show_root_heading: false
 
+## Training loops
+
+::: pytest_torch.training_loop
+    options:
+      show_root_heading: false
+      members: [TrainingSetup, TrainingRunner, run_training, standard_step, assert_optimizer_coverage, assert_resume_equivalent, ResumeReport, training_state, save_training_state, load_training_state, assert_accumulation_equivalent, split_batch, assert_mixed_precision_training]
+
 ## Performance
 
 ::: pytest_torch.perf
     options:
       show_root_heading: false
-      members: [measure_latency, measure_peak_memory, check_perf, PerfStore, PerfResult]
+      members: [measure_latency, measure_peak_memory, check_perf, compare_perf, PerfStore, PerfResult]
+
+## Benchmark suites
+
+::: pytest_torch.benchmark
+    options:
+      show_root_heading: false
+      members: [BenchmarkSuite, BenchmarkResult]
 
 ## Compilation and host syncs
 

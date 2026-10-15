@@ -21,6 +21,32 @@
 - `compare_perf`: the baseline comparison of `check_perf`, for numbers you measured
   yourself.
 - `LatencyStats.p90_ms`.
+- Testing training loops: your own training step and checkpoint code, run for a few seeded
+  steps from fresh setups (`TrainingSetup`, with the `training_runner` fixture or the
+  functions directly).
+  - `run_training` records per-step telemetry (`StepRecord`: losses, gradient norm, update
+    size, learning rates, optimizer steps, non-finite gradients, loss scale) without
+    changes to the training code. The returned `TrainingRun` adds `assert_healthy`, `assert_finite`,
+    `assert_no_skipped_updates`, `assert_grad_norm_below`, `assert_lr`,
+    `assert_loss_decreases` and `table()`.
+  - `assert_optimizer_coverage`: trainable parameters in no optimizer or in several, and
+    optimizers built for another copy of the model.
+  - `assert_resume_equivalent`: training resumed from a checkpoint matches uninterrupted
+    training, and the state after loading is compared with the saved state to name what's
+    missing (optimizer, scheduler, GradScaler, RNG). `save_training_state` and
+    `load_training_state` are reference implementations.
+  - `assert_accumulation_equivalent`: gradient accumulation matches one full-batch step,
+    diagnosing an unscaled loss, gradients not reset and optimizer steps at the wrong
+    micro-batch.
+  - `assert_mixed_precision_training`: GradScaler misuse (bypassed `scaler.step`, missing
+    `scaler.update`, clipping before `unscale_`), overflows and non-finite values.
+  - `standard_step(loss_fn, accumulation_steps=, max_grad_norm=)` for code without its own
+    step, and `split_batch`.
+  - Tolerance checks `training_resume` and `grad_accumulation`.
+
+  See `examples/test_training_loops.py`.
+- `TrainingRun` gained `records`, `setup` and the assertions above; `assert_loss_decreases`
+  and `assert_overfits_one_batch` return it as before.
 
 ### Fixed
 

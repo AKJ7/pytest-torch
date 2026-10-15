@@ -15,6 +15,7 @@ The plugin provides these fixtures in every test module; there is nothing to imp
 | [`perf_baseline`](#perf_baseline) | Latency/memory regression checks against a stored baseline |
 | [`metric_baseline`](#metric_baseline) | Dataset metrics compared with a stored baseline and thresholds |
 | [`model_loader`](#model_loader) | Session-cached Hugging Face / timm / torchvision loading |
+| [`training_runner`](#training_runner) | Short seeded training runs of your own training step, with telemetry, and resume, accumulation and mixed-precision checks |
 | [`model_config`](#model_config) | The current config when a test class has `configs` (e.g. a `ModelSuite` run per config) |
 
 The examples below assume `import pytest`, `import torch` and `from torch import nn`.
@@ -209,6 +210,40 @@ comes back in eval mode. Cached instances are shared between tests, so `copy.dee
 before mutating one. `hf(name, auto_class=..., dtype=..., device=..., **kwargs)`,
 `timm(name, pretrained=False, ...)` and `torchvision(name, weights=None, ...)` need the
 `hf`, `timm` and `torchvision` extras.
+
+## `training_runner`
+
+```python
+from torch.nn import functional as F
+from pytest_torch import TrainingSetup
+
+
+def make_setup():
+    model = nn.Linear(16, 4)
+    return TrainingSetup(model, torch.optim.SGD(model.parameters(), lr=0.1))
+
+
+def train_step(setup, batch):
+    x, y = batch
+    loss = F.cross_entropy(setup.model(x), y)
+    loss.backward()
+    setup.optimizer.step()
+    setup.optimizer.zero_grad()
+    return loss
+
+
+def test_training(training_runner, make_tensor):
+    batch = (make_tensor(8, 16), make_tensor(8, dtype=torch.long, low=0, high=4))
+    run = training_runner.run(make_setup, batch, train_step, steps=20)
+    run.assert_healthy(min_relative_decrease=0.2)
+    training_runner.assert_resume_equivalent(make_setup, batch, train_step, steps=6)
+```
+
+A `TrainingRunner` bound to the test's `torch_device` and `torch_seed`. Its methods `run`,
+`assert_resume_equivalent`, `assert_accumulation_equivalent` and
+`assert_mixed_precision_training` are the functions of the same names, with `device` and
+`seed` filled in. Each run builds a fresh setup with `make_setup` and moves the model to the
+device. See [Training loops](../guides/training-loops.md).
 
 ## `model_config`
 

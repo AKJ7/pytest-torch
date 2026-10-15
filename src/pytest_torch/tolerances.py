@@ -50,6 +50,8 @@ CHECK_DEFAULTS: dict[str, tuple[float, float]] = {
     "checkpoint": (0.0, 0.0),  # same weights, same device: outputs must be identical
     "layout_invariance": (1e-5, 1e-5),
     "streaming": (1e-5, 1e-5),  # chunked vs full pass of a stateful model
+    "training_resume": (1e-5, 1e-6),  # resumed vs uninterrupted training
+    "grad_accumulation": (1e-4, 1e-6),  # accumulated micro-batches vs one full batch
 }
 DEVICES = ("cpu", "cuda", "xpu", "mps")
 _KNOWN_DTYPES = {*DTYPE_DEFAULTS, "float8_e4m3fn", "float8_e5m2", "float8_e4m3fnuz", "float8_e5m2fnuz"}
